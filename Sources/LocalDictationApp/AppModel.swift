@@ -174,7 +174,7 @@ final class AppModel {
             self.workflow = nil
             self.recorder = nil
             if settings.showOverlay { overlayController.hide(after: 0) }
-            fail(error.localizedDescription)
+            fail(userFacingMessage(for: error))
             return
         }
 
@@ -275,13 +275,26 @@ final class AppModel {
                     overlayController.hide(after: 2.4)
                 }
             }
+        } catch TranscriptionError.emptyTranscript {
+            // The engine ran but heard nothing — that's "no speech", not an error.
+            status = "Idle"
+            errorMessage = nil
+            if settings.showOverlay { overlayController.hide(after: 0.4) }
         } catch {
-            fail(error.localizedDescription)
+            fail(userFacingMessage(for: error))
         }
 
         isFinishing = false
         self.workflow = nil
         self.recorder = nil
+    }
+
+    /// Plain-language message for the overlay/menu — never the raw technical
+    /// `description` (binary names, paths, status codes), which stays in logs.
+    private func userFacingMessage(for error: Error) -> String {
+        if let error = error as? TranscriptionError { return error.userMessage }
+        if let error = error as? AudioRecordingError { return error.description }
+        return "Something went wrong. Please try again."
     }
 
     private func makeWorkflow(settings: AppSettingsSnapshot) -> DictationWorkflow {

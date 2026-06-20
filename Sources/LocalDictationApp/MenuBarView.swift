@@ -1,4 +1,5 @@
 @preconcurrency import KeyboardShortcuts
+import LocalDictationCore
 import SwiftUI
 
 struct MenuBarView: View {
@@ -6,10 +7,23 @@ struct MenuBarView: View {
     @ObservedObject var updater: UpdaterModel
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(AppSettingsKeys.polishWithAI) private var polishWithAI = AppSettingsSnapshot.Defaults.polishWithAI
+    @AppStorage(AppSettingsKeys.dictationMode) private var dictationMode = AppSettingsSnapshot.Defaults.dictationMode
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+
+            // Quick mode switch — only meaningful when AI polish is on (modes
+            // shape the polish pass). Per-app profiles still override per app.
+            if polishWithAI {
+                Picker("Mode", selection: $dictationMode) {
+                    ForEach(DictationMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
 
             if !model.readiness.allReady {
                 setupCallout

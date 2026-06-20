@@ -43,15 +43,20 @@ else
 fi
 
 # Stage just the zip and generate a signed appcast whose enclosure points at the
-# GitHub release asset URL for this tag.
+# GitHub release asset URL for this tag. (Sparkle auto-update uses the zip.)
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 cp "$DIST/LocalDictation.zip" "$STAGE/"
 "$GEN_APPCAST" "$STAGE" \
     --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/" \
     --link "https://github.com/$REPO"
 
-# Publish the release with the zip + appcast attached.
+# Also build a drag-to-install .dmg for manual download (friendlier than the zip).
+SHORT_VERSION="$VERSION" bash "$PROJECT_DIR/scripts/dmg.sh"
+DMG="$DIST/LocalDictation-$VERSION.dmg"
+
+# Publish the release with the dmg (manual install) + zip + appcast (auto-update).
 gh release create "$TAG" \
+    "$DMG" \
     "$DIST/LocalDictation.zip" \
     "$STAGE/appcast.xml" \
     --repo "$REPO" \

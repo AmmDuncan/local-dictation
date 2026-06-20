@@ -61,6 +61,25 @@ public enum TranscriptionError: Error, Equatable, Sendable, CustomStringConverti
             "whisper-cli completed but returned no transcript."
         }
     }
+
+    /// What the user sees in the overlay/menu — plain language, no binary names,
+    /// file paths, or status codes (those stay in `description` for logs).
+    public var userMessage: String {
+        switch self {
+        case .missingExecutable:
+            "The speech engine is missing. Try reinstalling Local Dictation."
+        case .missingModel:
+            "No speech model is installed yet. Open Settings to download one."
+        case .missingAudioFile:
+            "That recording couldn't be read. Please try again."
+        case .processFailed:
+            "Couldn't transcribe that. Please try again."
+        case .timedOut:
+            "That took too long to transcribe. Try a shorter clip, or a smaller model in Settings."
+        case .emptyTranscript:
+            "No speech was detected."
+        }
+    }
 }
 
 // Surface the friendly `description` through `localizedDescription` too — without

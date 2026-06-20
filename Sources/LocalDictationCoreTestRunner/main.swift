@@ -42,6 +42,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
         await suite.run("Recognition prompt merges default vocabulary", testDefaultVocabularyMerge)
+        await suite.run("TranscriptionError userMessage is jargon-free", testTranscriptionErrorUserMessage)
         suite.finish()
     }
 }
@@ -709,6 +710,26 @@ private func testTranscriptHistory() throws {
     try expect(hits.count == 1 && hits.first?.text == "entry 4", "case-insensitive search finds entry 4")
     let all = TranscriptHistory.search(recs, query: "  ")
     try expect(all.first?.text == "entry 4", "empty query returns newest first")
+}
+
+private func testTranscriptionErrorUserMessage() throws {
+    // User-facing messages must never leak binary names, paths, or status codes
+    // (those stay in `description` for logs).
+    let errors: [TranscriptionError] = [
+        .missingExecutable("/opt/homebrew/bin/whisper-cli"),
+        .missingModel("/Users/x/models/m.bin"),
+        .missingAudioFile("/tmp/a.wav"),
+        .processFailed(2, "boom"),
+        .timedOut(60),
+        .emptyTranscript,
+    ]
+    for error in errors {
+        let m = error.userMessage
+        try expect(!m.localizedCaseInsensitiveContains("whisper-cli"), "userMessage must not name whisper-cli: \(m)")
+        try expect(!m.contains("/"), "userMessage must not contain a file path: \(m)")
+        try expect(!m.localizedCaseInsensitiveContains("status "), "userMessage must not contain a status code: \(m)")
+    }
+    try expect(TranscriptionError.emptyTranscript.userMessage == "No speech was detected.", "empty → no speech")
 }
 
 private func testDefaultVocabularyMerge() throws {
