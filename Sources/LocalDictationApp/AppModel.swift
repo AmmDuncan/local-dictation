@@ -301,7 +301,6 @@ final class AppModel {
         // The final pass prefers the resident server, waiting out a cold model
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
-        let resolved = effectiveProfile(settings: settings)
         let prompt = contextPrompt(settings: settings)
         let transcriber = ResolvingTranscriptionEngine(
             serverManager: serverManager,
@@ -317,46 +316,21 @@ final class AppModel {
         let recorder = AudioFileRecorder()
         self.recorder = recorder
 
-        // Polish runs in the resolved mode. The corrector mode is fed the same
-        // vocab/history context that biases recognition, so it can fix the
-        // mishearings whisper still gets wrong.
-        let polisher: TextPolishing? = resolved.polish
-            ? ServerBackedPolisher(
-                serverManager: llamaManager,
-                serverWait: 30,
-                mode: resolved.mode,
-                context: resolved.mode == .corrector ? prompt : nil
-            )
+        // Polish (when on) always fixes mishearings, fed the same vocab/history
+        // context that biases recognition — so it catches the names whisper still
+        // gets wrong (e.g. "clot" → "Claude").
+        let polisher: TextPolishing? = settings.polishWithAI
+            ? ServerBackedPolisher(serverManager: llamaManager, serverWait: 30, context: prompt)
             : nil
 
         return DictationWorkflow(
             recorder: recorder,
             transcriber: transcriber,
             inserter: inserter,
-            cleanupOptions: resolved.cleanUp ? TranscriptCleaner.Options() : nil,
+            cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil,
             polisher: polisher,
             postProcess: textReplacementsTransform(settings: settings)
         )
-    }
-
-    /// The mode + cleanup + polish to use for this dictation: a per-app profile
-    /// matched to the frontmost (target) app when enabled, else the global
-    /// settings. The frontmost app is the one being dictated INTO — this menu-bar
-    /// accessory never becomes frontmost itself.
-    private func effectiveProfile(settings: AppSettingsSnapshot) -> (mode: DictationMode, cleanUp: Bool, polish: Bool) {
-        guard settings.useAppProfiles, !settings.appProfiles.isEmpty else {
-            return (settings.mode, settings.cleanUpTranscript, settings.polishWithAI)
-        }
-        let fallback = AppProfile(
-            bundleIdentifier: "*", appName: "Default",
-            mode: settings.mode, cleanUp: settings.cleanUpTranscript, polish: settings.polishWithAI
-        )
-        let profile = AppProfileResolver.resolve(
-            bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-            profiles: settings.appProfiles,
-            fallback: fallback
-        )
-        return (profile.mode, profile.cleanUp, profile.polish)
     }
 
     private func makeInserter(settings: AppSettingsSnapshot) -> TextInserting {
@@ -504,12 +478,11 @@ private struct PreviewOnlyInserter: TextInserting {
 private struct ServerBackedPolisher: TextPolishing {
     let serverManager: ResidentServerManager
     let serverWait: TimeInterval
-    var mode: DictationMode = .clean
     var context: String?
 
     func polish(_ text: String) async -> String {
         guard let baseURL = await serverManager.awaitReady(timeout: serverWait) else { return text }
-        return await LlamaPolishEngine(baseURL: baseURL, mode: mode, context: context).polish(text)
+        return await LlamaPolishEngine(baseURL: baseURL, context: context).polish(text)
     }
 }
 

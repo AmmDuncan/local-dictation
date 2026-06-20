@@ -34,11 +34,10 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow fails when transcriber throws", testWorkflowTranscriberThrows)
         await suite.run("Workflow skips degenerate (too-short) recording", testWorkflowSkipsDegenerateRecording)
         await suite.run("Workflow cancel discards recording without inserting", testWorkflowCancelDiscardsRecording)
-        await suite.run("Dictation modes: prompts, context, word-change flag", testDictationModes)
+        await suite.run("Polish prompt corrects + weaves in context", testPolishPromptCorrects)
         await suite.run("Corrector guardrail allows word swaps, rejects expand/summary", testCorrectorGuardrail)
         await suite.run("Text replacements parse + whole-word apply", testTextReplacements)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
-        await suite.run("App profile resolves specific over fallback", testAppProfileResolve)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
         await suite.run("Recognition prompt merges default vocabulary", testDefaultVocabularyMerge)
@@ -558,35 +557,21 @@ private func testWorkflowCancelDiscardsRecording() async throws {
     try expect(idle.state == .idle, "Cancel when idle should be a no-op, got \(idle.state)")
 }
 
-private func testDictationModes() throws {
-    try expect(DictationMode.allCases.count == 6, "expected six modes, got \(DictationMode.allCases.count)")
-
-    // Clean mode reproduces the original strict 8-message body.
-    let cleanBody = TranscriptPolisher.chatRequestBody(transcript: "hi", mode: .clean)
-    let cleanJSON = try JSONSerialization.jsonObject(with: cleanBody) as? [String: Any]
-    let cleanMsgs = cleanJSON?["messages"] as? [[String: String]] ?? []
-    try expect(cleanMsgs.count == 8, "clean = system + 3 few-shot pairs + transcript, got \(cleanMsgs.count)")
-    try expect(cleanMsgs.first?["content"] == TranscriptPolisher.systemPrompt, "clean uses the strict system prompt")
-
-    // Code mode steers toward identifiers.
+private func testPolishPromptCorrects() throws {
+    // The single polish prompt: corrector behavior, context woven in when present.
+    let body = TranscriptPolisher.chatRequestBody(transcript: "hi", context: "Nxabyte, Qwen")
+    let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+    let msgs = json?["messages"] as? [[String: String]] ?? []
+    try expect(msgs.count == 8, "system + 3 few-shot pairs + transcript = 8, got \(msgs.count)")
+    let system = msgs.first?["content"] ?? ""
+    try expect(system.contains("Nxabyte"), "system prompt should weave in the context terms")
     try expect(
-        DictationMode.code.systemPrompt().localizedCaseInsensitiveContains("identifier"),
-        "code mode prompt should mention identifiers"
+        system.localizedCaseInsensitiveContains("misheard") || system.localizedCaseInsensitiveContains("replace"),
+        "polish prompt should say it may replace misheard words"
     )
-
-    // Corrector allows word changes and weaves context in.
-    try expect(DictationMode.corrector.allowsWordChanges, "corrector allows word changes")
-    try expect(!DictationMode.clean.allowsWordChanges, "clean preserves words")
-    let corr = DictationMode.corrector.systemPrompt(context: "Nxabyte, Qwen")
-    try expect(corr.contains("Nxabyte"), "corrector prompt should include context terms")
-    try expect(
-        corr.localizedCaseInsensitiveContains("misheard") || corr.localizedCaseInsensitiveContains("replace"),
-        "corrector prompt should say it may replace misheard words"
-    )
-    try expect(
-        !DictationMode.corrector.systemPrompt().contains("Likely-correct"),
-        "no context block when no context is given"
-    )
+    // Without context there's no dangling "known terms" block.
+    let noCtx = TranscriptPolisher.systemPrompt()
+    try expect(!noCtx.contains("known terms"), "no known-terms block when no context is given")
 }
 
 private func testCorrectorGuardrail() throws {
@@ -668,30 +653,6 @@ private func testInsertionFormatter() throws {
     try expect(
         InsertionFormatter.format("API call", precedingCharacter: "e") == " API call",
         "acronym is preserved"
-    )
-}
-
-private func testAppProfileResolve() throws {
-    let def = AppProfile(bundleIdentifier: "*", appName: "Default", mode: .clean, cleanUp: true, polish: false)
-    let xcode = AppProfile(bundleIdentifier: "com.apple.dt.Xcode", appName: "Xcode", mode: .code, cleanUp: true, polish: false)
-    let mail = AppProfile(bundleIdentifier: "com.apple.mail", appName: "Mail", mode: .email, cleanUp: true, polish: true)
-    let profiles = [xcode, mail]
-
-    try expect(
-        AppProfileResolver.resolve(bundleID: "com.apple.dt.Xcode", profiles: profiles, fallback: def).mode == .code,
-        "exact match resolves to its profile"
-    )
-    try expect(
-        AppProfileResolver.resolve(bundleID: "COM.APPLE.MAIL", profiles: profiles, fallback: def).mode == .email,
-        "match is case-insensitive"
-    )
-    try expect(
-        AppProfileResolver.resolve(bundleID: "com.unknown.app", profiles: profiles, fallback: def).mode == .clean,
-        "unknown app falls back"
-    )
-    try expect(
-        AppProfileResolver.resolve(bundleID: nil, profiles: profiles, fallback: def).mode == .clean,
-        "nil bundle falls back"
     )
 }
 

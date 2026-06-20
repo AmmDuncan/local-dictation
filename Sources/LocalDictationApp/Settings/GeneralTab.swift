@@ -1,5 +1,4 @@
 @preconcurrency import KeyboardShortcuts
-import LocalDictationCore
 import SwiftUI
 
 struct GeneralTab: View {
@@ -10,12 +9,9 @@ struct GeneralTab: View {
     @Binding var polishWithAI: Bool
     var polishStore: PolishModelStore
     @Binding var language: String
-    @Binding var dictationMode: String
     @Binding var activationMode: String
     @Binding var saveHistory: Bool
     var refresh: () -> Void
-
-    private var selectedMode: DictationMode { DictationMode(rawValue: dictationMode) ?? .clean }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,20 +37,10 @@ struct GeneralTab: View {
                     Toggle("Clean up dictation", isOn: $cleanUpTranscript)
                         .help("Before typing, remove filler words (um, uh) and fix capitalization & spacing. Never changes your wording.")
                     Toggle("Polish with AI (experimental)", isOn: $polishWithAI)
-                        .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, and remove fillers — never changing your meaning. Keeps a resident process (extra RAM). All on-device.")
+                        .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, fillers, and misheard names/terms — using your vocabulary (e.g. \"clot\" → \"Claude\"). Keeps a resident process (extra RAM). All on-device.")
 
                     if polishWithAI {
                         polishModelRow
-                        Picker("Mode", selection: $dictationMode) {
-                            ForEach(DictationMode.allCases, id: \.self) { mode in
-                                Text(mode.displayName).tag(mode.rawValue)
-                            }
-                        }
-                        .help("How the AI shapes your text. Corrector may fix misheard words; the others keep your exact wording.")
-                        Text(selectedMode.summary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Picker("Language", selection: $language) {
                         Text("Auto-detect").tag("auto")
