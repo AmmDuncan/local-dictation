@@ -147,6 +147,83 @@ PYEOF
 LD_GGML_BACKENDS_LINK="/tmp/local-dictation-ggml-backends-dir01"
 bundle_whisper
 
+# Bundle llama-server + its dylibs for the optional on-device LLM polish pass so
+# friends get polish (now relied on for meaning-based punctuation) with zero
+# setup. ggml + its backend plugins are SHARED with whisper — same
+# /opt/homebrew/opt/ggml/libggml.0.dylib, already bundled and baked-path-patched
+# by bundle_whisper — so we only add llama's own dylibs plus openssl (llama-server
+# links it for HF downloads we don't use, but it must resolve at load time).
+# Must run AFTER bundle_whisper so the shared ggml dylibs already sit in Frameworks/.
+bundle_llama() {
+    local srv
+    srv="$(command -v llama-server || true)"
+    if [[ -z "$srv" ]]; then
+        echo "WARNING: llama-server not found — LLM polish stays Homebrew-only (off for friends)."
+        return
+    fi
+    if [[ ! -f "$FRAMEWORKS_DIR/libggml.0.dylib" ]]; then
+        echo "WARNING: shared libggml not bundled (whisper bundling failed?) — skipping llama; polish backend would not resolve."
+        return
+    fi
+    srv="$(readlink -f "$srv" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$srv")"
+    cp "$srv" "$HELPERS_DIR/llama-server"; chmod +x "$HELPERS_DIR/llama-server"
+
+    local libdir
+    libdir="$(cd "$(dirname "$srv")/../lib" && pwd)"
+
+    # llama's own dylibs (cp -L resolves the version symlinks, keeps the @rpath soname).
+    local llama_dylibs=(libllama.0.dylib libllama-common.0.dylib libmtmd.0.dylib libllama-server-impl.dylib)
+    for name in "${llama_dylibs[@]}"; do
+        if [[ ! -f "$libdir/$name" ]]; then
+            echo "WARNING: $name not found in $libdir; llama bundling incomplete."; return
+        fi
+        cp -L "$libdir/$name" "$FRAMEWORKS_DIR/$name"; chmod +w "$FRAMEWORKS_DIR/$name"
+    done
+
+    # openssl (resolve the opt symlink → real Cellar files).
+    local ssl_dir="/opt/homebrew/opt/openssl@3/lib"
+    for name in libssl.3.dylib libcrypto.3.dylib; do
+        if [[ ! -f "$ssl_dir/$name" ]]; then
+            echo "WARNING: $name not found; llama bundling incomplete."; return
+        fi
+        cp -L "$ssl_dir/$name" "$FRAMEWORKS_DIR/$name"; chmod +w "$FRAMEWORKS_DIR/$name"
+    done
+    # libssl references libcrypto by its versioned Cellar path — capture it for -change.
+    local ssl_crypto_ref
+    ssl_crypto_ref="$(otool -L "$FRAMEWORKS_DIR/libssl.3.dylib" | grep -oE '/opt/homebrew/(opt/openssl@3|Cellar/openssl@3/[0-9._]+)/lib/libcrypto.3.dylib' | head -1)"
+
+    # llama-server: repoint abs ggml/openssl deps to @rpath; its @rpath/libllama*
+    # deps resolve via the new Frameworks rpath. ggml backends come from the shared,
+    # already-patched libggml + the /tmp symlink (LlamaServerManager.ensureBackendsLinked).
+    install_name_tool \
+        -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+        -change /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib @rpath/libssl.3.dylib \
+        -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpath/libcrypto.3.dylib \
+        -add_rpath @executable_path/../Frameworks \
+        "$HELPERS_DIR/llama-server"
+
+    # Each llama dylib: id to @rpath, repoint abs ggml/openssl deps, add @loader_path
+    # so sibling dylibs in Frameworks/ resolve. (Inter-llama deps are already @rpath.)
+    for name in "${llama_dylibs[@]}"; do
+        install_name_tool -id "@rpath/$name" \
+            -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+            -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+            -change /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib @rpath/libssl.3.dylib \
+            -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpath/libcrypto.3.dylib \
+            -add_rpath @loader_path "$FRAMEWORKS_DIR/$name" 2>/dev/null || true
+    done
+
+    # openssl: own ids to @rpath; libssl points at the bundled libcrypto.
+    install_name_tool -id @rpath/libcrypto.3.dylib "$FRAMEWORKS_DIR/libcrypto.3.dylib"
+    install_name_tool -id @rpath/libssl.3.dylib \
+        ${ssl_crypto_ref:+-change "$ssl_crypto_ref" @rpath/libcrypto.3.dylib} \
+        -add_rpath @loader_path "$FRAMEWORKS_DIR/libssl.3.dylib"
+
+    echo "Bundled llama-server + dylibs (LLM polish, ggml shared with whisper)."
+}
+bundle_llama
+
 # Bundle Sparkle.framework for in-app auto-update. The universal slice from the
 # resolved xcframework goes into Frameworks/; the main binary's rpath (above)
 # resolves it. Nested helpers (Autoupdate, Updater.app, XPCServices) are signed
