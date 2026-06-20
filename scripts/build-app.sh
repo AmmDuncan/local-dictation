@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_NAME="LocalDictation"
+APP_DIR="$PROJECT_DIR/$APP_NAME.app"
+CONTENTS_DIR="$APP_DIR/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+HELPERS_DIR="$CONTENTS_DIR/Helpers"
+
+SHORT_VERSION="0.1.0"
+BUILD_VERSION="$(git -C "$PROJECT_DIR" rev-list --count HEAD 2>/dev/null || echo 1)"
+
+cd "$PROJECT_DIR"
+swift build -c release --product LocalDictation
+
+rm -rf "$APP_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR" "$HELPERS_DIR"
+cp "$PROJECT_DIR/.build/release/LocalDictation" "$MACOS_DIR/LocalDictation"
+
+# App icon: regenerate the iconset → .icns, then bundle it.
+rm -rf "$PROJECT_DIR/AppIcon.iconset"
+swift "$PROJECT_DIR/scripts/make-icon.swift" "$PROJECT_DIR/AppIcon.iconset"
+iconutil -c icns "$PROJECT_DIR/AppIcon.iconset" -o "$PROJECT_DIR/AppIcon.icns"
+cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+
+# Bundle the Silero VAD model so non-speech (silence/whistle/noise) is dropped
+# instead of hallucinated into words.
+VAD_SRC="$HOME/models/ggml-silero-v5.1.2.bin"
+if [[ ! -f "$VAD_SRC" ]]; then
+    curl -sL -o "$VAD_SRC" "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin" || true
+fi
+if [[ -f "$VAD_SRC" ]]; then
+    cp "$VAD_SRC" "$RESOURCES_DIR/ggml-silero-v5.1.2.bin"
+    echo "Bundled VAD model."
+else
+    echo "WARNING: VAD model not found — app runs without VAD."
+fi
+
+# Bundle whisper-cli + its Homebrew dylibs so friends need zero setup. We copy
+# the binary into Helpers/, its three dylibs into Frameworks/, and rewrite every
+# load path to @rpath so they resolve inside the .app instead of /opt/homebrew.
+bundle_whisper() {
+    local cli
+    cli="$(command -v whisper-cli || true)"
+    if [[ -z "$cli" ]]; then
+        echo "WARNING: whisper-cli not found — app will rely on a system install at runtime."
+        return
+    fi
+    cli="$(readlink -f "$cli" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$cli")"
+    cp "$cli" "$HELPERS_DIR/whisper-cli"
+    chmod +x "$HELPERS_DIR/whisper-cli"
+
+    local dylibs=(libwhisper.1.dylib libggml.0.dylib libggml-base.0.dylib)
+    for name in "${dylibs[@]}"; do
+        local src
+        src="$(find /opt/homebrew -name "$name" 2>/dev/null | head -1)"
+        [[ -z "$src" ]] && { echo "WARNING: $name not found; whisper bundling incomplete."; return; }
+        cp -L "$src" "$FRAMEWORKS_DIR/$name"
+        chmod +w "$FRAMEWORKS_DIR/$name"
+    done
+
+    # whisper-cli: point ggml deps at @rpath, add a path to Frameworks.
+    install_name_tool \
+        -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+        -add_rpath @executable_path/../Frameworks \
+        "$HELPERS_DIR/whisper-cli"
+
+    # whisper-server: same deps, keeps the model resident across dictations.
+    local srv
+    srv="$(command -v whisper-server || true)"
+    if [[ -n "$srv" ]]; then
+        srv="$(readlink -f "$srv" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$srv")"
+        cp "$srv" "$HELPERS_DIR/whisper-server"; chmod +x "$HELPERS_DIR/whisper-server"
+        install_name_tool \
+            -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+            -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+            -add_rpath @executable_path/../Frameworks \
+            "$HELPERS_DIR/whisper-server"
+    fi
+
+    # Each dylib: set its own id to @rpath, repoint inter-deps, and add @loader_path
+    # so sibling dylibs in Frameworks/ resolve.
+    install_name_tool -id @rpath/libwhisper.1.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+        -add_rpath @loader_path "$FRAMEWORKS_DIR/libwhisper.1.dylib"
+    install_name_tool -id @rpath/libggml.0.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+        -add_rpath @loader_path "$FRAMEWORKS_DIR/libggml.0.dylib"
+    install_name_tool -id @rpath/libggml-base.0.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+        -change /opt/homebrew/opt/libomp/lib/libomp.dylib @rpath/libomp.dylib \
+        "$FRAMEWORKS_DIR/libggml-base.0.dylib"
+
+    # ggml's compute backends (Metal/CPU/BLAS) are dlopen'd PLUGINS loaded from a
+    # path baked into libggml.0.dylib (Homebrew's libexec). Bundle the plugins +
+    # libomp, then patch that baked path to a fixed location the app symlinks to
+    # its own Frameworks at runtime (LD_GGML_BACKENDS_LINK below + WhisperLocator).
+    local libomp
+    libomp="$(find /opt/homebrew -name libomp.dylib 2>/dev/null | head -1)"
+    if [[ -n "$libomp" ]]; then
+        cp -L "$libomp" "$FRAMEWORKS_DIR/libomp.dylib"; chmod +w "$FRAMEWORKS_DIR/libomp.dylib"
+        install_name_tool -id @rpath/libomp.dylib "$FRAMEWORKS_DIR/libomp.dylib"
+    fi
+
+    local baked
+    baked="$(strings "$FRAMEWORKS_DIR/libggml.0.dylib" | grep -oE '/opt/homebrew/Cellar/ggml/[0-9.]+/libexec' | head -1)"
+    if [[ -n "$baked" && -d "$baked" ]]; then
+        for plugin in "$baked"/libggml-*.so; do
+            local pn; pn="$(basename "$plugin")"
+            cp -L "$plugin" "$FRAMEWORKS_DIR/$pn"; chmod +w "$FRAMEWORKS_DIR/$pn"
+            install_name_tool \
+                -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+                -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+                -change /opt/homebrew/opt/libomp/lib/libomp.dylib @rpath/libomp.dylib \
+                -add_rpath @loader_path "$FRAMEWORKS_DIR/$pn" 2>/dev/null || true
+        done
+        python3 - "$FRAMEWORKS_DIR/libggml.0.dylib" "$baked" "$LD_GGML_BACKENDS_LINK" <<'PYEOF'
+import sys
+f, old, new = sys.argv[1], sys.argv[2].encode(), sys.argv[3].encode()
+if len(new) != len(old):
+    sys.exit(f"FATAL: LD_GGML_BACKENDS_LINK must be {len(old)} bytes (to match '{old.decode()}'), got {len(new)}. Adjust it and WhisperLocator.backendsLinkPath together.")
+data = open(f, 'rb').read()
+if old not in data:
+    sys.exit(f"FATAL: baked ggml path {old.decode()} not found in libggml")
+open(f, 'wb').write(data.replace(old, new))
+print(f"patched ggml backend path: {old.decode()} -> {new.decode()}")
+PYEOF
+    fi
+
+    echo "Bundled whisper-cli + dylibs + backend plugins."
+}
+# Must be EXACTLY the same length + value as WhisperLocator.backendsLinkPath.
+LD_GGML_BACKENDS_LINK="/tmp/local-dictation-ggml-backends-dir01"
+bundle_whisper
+
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>LocalDictation</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.ammiel.local-dictation</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Local Dictation</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${SHORT_VERSION}</string>
+  <key>CFBundleVersion</key>
+  <string>${BUILD_VERSION}</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Local Dictation records your voice to transcribe it locally with whisper.cpp.</string>
+</dict>
+</plist>
+PLIST
+
+# Sign nested binaries first, then the app bundle (deep). Adding the icon, the
+# Info.plist, and the bundled binaries after `swift build` invalidates the
+# original signature, so we re-sign everything last. The stable self-signed
+# identity (scripts/setup-signing.sh) keeps Microphone/Accessibility grants
+# across rebuilds; ad-hoc is the fallback (resets permissions each build).
+SIGN_IDENTITY="Local Dictation Dev"
+if security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
+    SIGN_AS="$SIGN_IDENTITY"
+    echo "Signing with stable identity: $SIGN_IDENTITY"
+else
+    SIGN_AS="-"
+    echo "WARNING: '$SIGN_IDENTITY' not found — signing ad-hoc. Run scripts/setup-signing.sh."
+fi
+
+for nested in "$FRAMEWORKS_DIR"/*.dylib "$FRAMEWORKS_DIR"/*.so "$HELPERS_DIR"/*; do
+    [[ -e "$nested" ]] && codesign --force --sign "$SIGN_AS" "$nested"
+done
+codesign --force --deep --sign "$SIGN_AS" "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR" && echo "Signature OK"
+
+echo "Built $APP_DIR (v$SHORT_VERSION build $BUILD_VERSION)"
