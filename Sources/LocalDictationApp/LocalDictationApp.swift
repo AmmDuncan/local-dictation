@@ -1,3 +1,4 @@
+import ApplicationServices
 @preconcurrency import KeyboardShortcuts
 import LocalDictationCore
 import SwiftUI
@@ -110,6 +111,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Diagnostic (release-available, env-gated): verify the live AX context
+        // pipeline at runtime without a microphone — see runContextProbe. No-op
+        // unless LD_CONTEXT_PROBE is set, so it's inert in normal use.
+        if let path = ProcessInfo.processInfo.environment["LD_CONTEXT_PROBE"] {
+            runContextProbe(to: path)
+            return
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["LD_METER_TEST"] != nil {
             runMeterTest()
@@ -154,6 +163,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installSignalControls()
+    }
+
+    /// Diagnostic (env LD_CONTEXT_PROBE=<file>): lets the AX context pipeline be
+    /// verified at runtime WITHOUT a microphone. Logs whether the process is
+    /// accessibility-trusted, then polls ~20s; for each tick it records the
+    /// frontmost app, its app class, and the caret-preceding text the pipeline
+    /// reads. On the first non-self app with caret text it also records the
+    /// command-mode result for a sample "me" — both as-classified and forced to
+    /// terminal — proving the gather → classify → substitute chain on real input.
+    /// The spoken-ASR step still needs a person; everything before it does not.
+    @MainActor
+    private func runContextProbe(to path: String) {
+        Task { @MainActor in
+            var log = "AXIsProcessTrusted=\(AXIsProcessTrusted())\n"
+            func flush() { try? log.write(toFile: path, atomically: true, encoding: .utf8) }
+            flush()
+            for tick in 0..<40 {
+                let ctx = AccessibilityContextProvider.gather()
+                let app = ctx.activeApplicationName ?? "nil"
+                let cls = ContextBias.classify(appName: ctx.activeApplicationName)
+                let pre = ctx.precedingText
+                log += "tick \(tick): app=\(app) class=\(cls.rawValue) preceding=\(pre.map { "\"\($0)\"" } ?? "nil")\n"
+                if app != "nil", app != "LocalDictation", let pre, !pre.isEmpty {
+                    let asClassified = CommandModeCorrections.apply(to: "me", appClass: cls, precedingText: pre)
+                    let forcedTerminal = CommandModeCorrections.apply(to: "me", appClass: .terminal, precedingText: pre)
+                    log += "CAPTURE as_classified: \"me\" -> \"\(asClassified)\"\n"
+                    log += "CAPTURE forced_terminal: \"me\" -> \"\(forcedTerminal)\"\n"
+                    flush()
+                    exit(0)
+                }
+                flush()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            log += "DONE (no non-self focused text field captured)\n"
+            flush()
+            exit(1)
+        }
     }
 
     #if DEBUG
