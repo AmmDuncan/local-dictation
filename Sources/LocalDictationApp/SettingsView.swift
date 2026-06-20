@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.polishWithAI) private var polishWithAI = AppSettingsSnapshot.Defaults.polishWithAI
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
     @AppStorage(AppSettingsKeys.useHistoryContext) private var useHistoryContext = AppSettingsSnapshot.Defaults.useHistoryContext
+    @AppStorage(AppSettingsKeys.useDefaultVocabulary) private var useDefaultVocabulary = AppSettingsSnapshot.Defaults.useDefaultVocabulary
     @AppStorage(AppSettingsKeys.dictationMode) private var dictationMode = AppSettingsSnapshot.Defaults.dictationMode
     @AppStorage(AppSettingsKeys.activationMode) private var activationMode = AppSettingsSnapshot.Defaults.activationMode
     @AppStorage(AppSettingsKeys.saveHistory) private var saveHistory = AppSettingsSnapshot.Defaults.saveHistory
@@ -66,6 +67,7 @@ struct SettingsView: View {
                 modelPath: $modelPath,
                 customVocabulary: $customVocabulary,
                 useHistoryContext: $useHistoryContext,
+                useDefaultVocabulary: $useDefaultVocabulary,
                 insertionMethod: $insertionMethod,
                 smartSpacing: $smartSpacing,
                 useTextReplacements: $useTextReplacements,

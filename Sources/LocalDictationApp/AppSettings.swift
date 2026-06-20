@@ -13,6 +13,7 @@ enum AppSettingsKeys {
     static let polishModelPath = "polishModelPath"
     static let customVocabulary = "customVocabulary"
     static let useHistoryContext = "useHistoryContext"
+    static let useDefaultVocabulary = "useDefaultVocabulary"
     static let dictationMode = "dictationMode"
     static let useTextReplacements = "useTextReplacements"
     static let textReplacements = "textReplacements"
@@ -41,6 +42,7 @@ struct AppSettingsSnapshot: Equatable {
     var polishModelPath: String
     var customVocabulary: String
     var useHistoryContext: Bool
+    var useDefaultVocabulary: Bool
     var dictationMode: String
     var useTextReplacements: Bool
     var textReplacements: String
@@ -78,6 +80,7 @@ struct AppSettingsSnapshot: Equatable {
             polishModelPath: defaults.string(forKey: AppSettingsKeys.polishModelPath) ?? Defaults.polishModelPath,
             customVocabulary: defaults.string(forKey: AppSettingsKeys.customVocabulary) ?? Defaults.customVocabulary,
             useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext,
+            useDefaultVocabulary: defaults.object(forKey: AppSettingsKeys.useDefaultVocabulary) as? Bool ?? Defaults.useDefaultVocabulary,
             dictationMode: defaults.string(forKey: AppSettingsKeys.dictationMode) ?? Defaults.dictationMode,
             useTextReplacements: defaults.object(forKey: AppSettingsKeys.useTextReplacements) as? Bool ?? Defaults.useTextReplacements,
             textReplacements: defaults.string(forKey: AppSettingsKeys.textReplacements) ?? Defaults.textReplacements,
@@ -103,6 +106,7 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.polishModelPath: Defaults.polishModelPath,
             AppSettingsKeys.customVocabulary: Defaults.customVocabulary,
             AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext,
+            AppSettingsKeys.useDefaultVocabulary: Defaults.useDefaultVocabulary,
             AppSettingsKeys.dictationMode: Defaults.dictationMode,
             AppSettingsKeys.useTextReplacements: Defaults.useTextReplacements,
             AppSettingsKeys.textReplacements: Defaults.textReplacements,
@@ -126,6 +130,7 @@ struct AppSettingsSnapshot: Equatable {
         static let polishModelPath = "~/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
         static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
         static let useHistoryContext = true  // feed recent transcripts as context bias
+        static let useDefaultVocabulary = true  // bias toward common terms (Claude, GitHub, …)
         static let dictationMode = DictationMode.clean.rawValue
         static let useTextReplacements = false
         static let textReplacements = ""

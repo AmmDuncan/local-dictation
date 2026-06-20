@@ -41,6 +41,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("App profile resolves specific over fallback", testAppProfileResolve)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
+        await suite.run("Recognition prompt merges default vocabulary", testDefaultVocabularyMerge)
         suite.finish()
     }
 }
@@ -708,6 +709,33 @@ private func testTranscriptHistory() throws {
     try expect(hits.count == 1 && hits.first?.text == "entry 4", "case-insensitive search finds entry 4")
     let all = TranscriptHistory.search(recs, query: "  ")
     try expect(all.first?.text == "entry 4", "empty query returns newest first")
+}
+
+private func testDefaultVocabularyMerge() throws {
+    // User vocab first, then defaults (deduped vs vocab), then history — in budget.
+    let p = RecognitionContext.prompt(
+        vocabulary: "Acme, Zeta",
+        defaults: ["Claude", "Acme", "GitHub"],  // "Acme" already in user vocab → skipped
+        history: ["hello there"],
+        maxChars: 200
+    )
+    try expect(p.contains("Acme") && p.contains("Zeta"), "should include user vocab")
+    try expect(p.contains("Claude") && p.contains("GitHub"), "should include defaults")
+    try expect(p.contains("hello there"), "should include history")
+    let zeta = p.range(of: "Zeta")!.lowerBound
+    let claude = p.range(of: "Claude")!.lowerBound
+    try expect(zeta < claude, "user vocab should precede defaults")
+    try expect(p.components(separatedBy: "Acme").count - 1 == 1, "user-vocab term should not be duplicated by defaults")
+    try expect(p.count <= 200, "should respect maxChars")
+
+    // No defaults → same as before (backward compatible).
+    try expect(
+        RecognitionContext.prompt(vocabulary: "X", defaults: [], history: [], maxChars: 100) == "X",
+        "no defaults → just the vocabulary"
+    )
+    // Defaults work with empty user vocab (the out-of-the-box case).
+    let noVocab = RecognitionContext.prompt(vocabulary: "", defaults: ["Claude", "Qwen"], history: [], maxChars: 100)
+    try expect(noVocab.contains("Claude") && noVocab.contains("Qwen"), "defaults apply even with no user vocab")
 }
 
 private func testKeystrokeChunks() throws {

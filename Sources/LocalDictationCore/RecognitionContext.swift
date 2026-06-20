@@ -14,17 +14,34 @@ public enum RecognitionContext {
 
     public static func prompt(
         vocabulary: String,
+        defaults: [String] = [],
         history: [String],
         maxChars: Int = defaultMaxChars
     ) -> String {
         let vocab = vocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Vocabulary is the highest-value signal — keep it whole if it fits.
+        // Priority order within the bounded prompt: the user's own vocabulary
+        // (highest signal), then the built-in defaults, then recent history.
         var parts: [String] = []
         var budget = maxChars
         if !vocab.isEmpty {
             parts.append(vocab)
             budget -= vocab.count + 1
+        }
+
+        // Built-in defaults — add terms that fit, skipping ones already covered by
+        // the user's vocabulary so we don't repeat them.
+        let lowerVocab = vocab.lowercased()
+        var keptDefaults: [String] = []
+        for term in defaults {
+            let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty, !lowerVocab.contains(t.lowercased()) else { continue }
+            if t.count + 2 > budget { break }
+            keptDefaults.append(t)
+            budget -= t.count + 2
+        }
+        if !keptDefaults.isEmpty {
+            parts.append(keptDefaults.joined(separator: ", "))
         }
 
         // Add recent history newest-first until the budget runs out, then restore

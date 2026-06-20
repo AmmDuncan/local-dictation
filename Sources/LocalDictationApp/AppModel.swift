@@ -377,6 +377,7 @@ final class AppModel {
     private func contextPrompt(settings: AppSettingsSnapshot) -> String? {
         let prompt = RecognitionContext.prompt(
             vocabulary: settings.customVocabulary,
+            defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
             history: settings.useHistoryContext ? history : []
         )
         return prompt.isEmpty ? nil : prompt

@@ -6,6 +6,7 @@ struct AdvancedTab: View {
     @Binding var modelPath: String
     @Binding var customVocabulary: String
     @Binding var useHistoryContext: Bool
+    @Binding var useDefaultVocabulary: Bool
     @Binding var insertionMethod: String
     @Binding var smartSpacing: Bool
     @Binding var useTextReplacements: Bool
@@ -27,6 +28,8 @@ struct AdvancedTab: View {
                 }
                 Toggle("Use recent transcripts as context", isOn: $useHistoryContext)
                     .help("Bias recognition toward words from your recent dictations. All on-device.")
+                Toggle("Use built-in vocabulary", isOn: $useDefaultVocabulary)
+                    .help("Bias toward common terms (Claude, GitHub, TypeScript, …) so they transcribe correctly without adding them yourself. Your own vocabulary always takes priority.")
             }
 
             Section("Insertion") {
