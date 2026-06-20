@@ -34,9 +34,16 @@ public enum TranscriptPolisher {
     ]
 
     /// OpenAI-compatible chat request body for llama-server's `/v1/chat/completions`.
-    public static func chatRequestBody(transcript: String, temperature: Double = 0) -> Data {
-        var messages: [[String: String]] = [["role": "system", "content": systemPrompt]]
-        for example in fewShot {
+    /// `mode` selects the system prompt + few-shot; `context` (vocab + history) is
+    /// only used by the corrector mode. Defaults reproduce the original clean pass.
+    public static func chatRequestBody(
+        transcript: String,
+        mode: DictationMode = .clean,
+        context: String? = nil,
+        temperature: Double = 0
+    ) -> Data {
+        var messages: [[String: String]] = [["role": "system", "content": mode.systemPrompt(context: context)]]
+        for example in mode.fewShot {
             messages.append(["role": "user", "content": example.user])
             messages.append(["role": "assistant", "content": example.assistant])
         }
@@ -90,6 +97,21 @@ public enum TranscriptPolisher {
         let newWords = pol.filter { !origSet.contains($0) }
         return Double(newWords.count) / Double(pol.count) <= maxNewWordRatio
     }
+
+    /// Guardrail for the `corrector` mode, which is *allowed* to swap misheard
+    /// words — so the word-overlap ratio doesn't apply. It instead bounds LENGTH:
+    /// the output may substitute words but must not balloon (an answer/expansion)
+    /// or collapse (a summary). `false` → discard and keep the rules-cleaned text.
+    public static func isFaithfulCorrection(polished: String, original: String) -> Bool {
+        let orig = contentWords(original)
+        let pol = contentWords(polished)
+
+        guard !orig.isEmpty else { return true }
+        guard !pol.isEmpty else { return false }
+        let lower = max(1, orig.count / 2)
+        let upper = orig.count + max(3, orig.count / 2)
+        return pol.count >= lower && pol.count <= upper
+    }
 }
 
 /// Optional post-transcription cleanup that may run an external model. Returns
@@ -105,10 +127,21 @@ public protocol TextPolishing: Sendable {
 public struct LlamaPolishEngine: TextPolishing {
     public var baseURL: URL
     public var timeoutSeconds: TimeInterval
+    /// Output mode — drives the system prompt and which guardrail applies.
+    public var mode: DictationMode
+    /// Vocabulary + recent-history context, only used by the corrector mode.
+    public var context: String?
 
-    public init(baseURL: URL, timeoutSeconds: TimeInterval = 20) {
+    public init(
+        baseURL: URL,
+        timeoutSeconds: TimeInterval = 20,
+        mode: DictationMode = .clean,
+        context: String? = nil
+    ) {
         self.baseURL = baseURL
         self.timeoutSeconds = timeoutSeconds
+        self.mode = mode
+        self.context = context
     }
 
     public func polish(_ text: String) async -> String {
@@ -118,7 +151,7 @@ public struct LlamaPolishEngine: TextPolishing {
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutSeconds
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = TranscriptPolisher.chatRequestBody(transcript: text)
+        request.httpBody = TranscriptPolisher.chatRequestBody(transcript: text, mode: mode, context: context)
 
         guard
             let (data, response) = try? await URLSession.shared.data(for: request),
@@ -126,10 +159,21 @@ public struct LlamaPolishEngine: TextPolishing {
             let content = TranscriptPolisher.parseContent(data)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             !content.isEmpty,
-            TranscriptPolisher.isFaithful(polished: content, original: text)
+            isAcceptable(polished: content, original: text)
         else {
             return text
         }
         return content
+    }
+
+    /// Corrector swaps words (length-bounded guard); formatter modes must keep the
+    /// user's wording (overlap-ratio guard tuned per mode).
+    private func isAcceptable(polished: String, original: String) -> Bool {
+        if mode.allowsWordChanges {
+            return TranscriptPolisher.isFaithfulCorrection(polished: polished, original: original)
+        }
+        return TranscriptPolisher.isFaithful(
+            polished: polished, original: original, maxNewWordRatio: mode.maxNewWordRatio
+        )
     }
 }

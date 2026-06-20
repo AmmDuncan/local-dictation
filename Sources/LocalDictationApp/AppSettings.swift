@@ -1,4 +1,5 @@
 import Foundation
+import LocalDictationCore
 
 enum AppSettingsKeys {
     static let whisperExecutablePath = "whisperExecutablePath"
@@ -12,7 +13,21 @@ enum AppSettingsKeys {
     static let polishModelPath = "polishModelPath"
     static let customVocabulary = "customVocabulary"
     static let useHistoryContext = "useHistoryContext"
+    static let dictationMode = "dictationMode"
+    static let useTextReplacements = "useTextReplacements"
+    static let textReplacements = "textReplacements"
+    static let insertionMethod = "insertionMethod"
+    static let smartSpacing = "smartSpacing"
+    static let activationMode = "activationMode"
+    static let useAppProfiles = "useAppProfiles"
+    static let appProfiles = "appProfiles"
+    static let saveHistory = "saveHistory"
 }
+
+/// How a dictation key-press behaves.
+enum ActivationMode: String { case hold, toggle }
+/// How transcribed text reaches the cursor.
+enum InsertionMethod: String { case paste, keystroke }
 
 struct AppSettingsSnapshot: Equatable {
     var whisperExecutablePath: String
@@ -26,15 +41,31 @@ struct AppSettingsSnapshot: Equatable {
     var polishModelPath: String
     var customVocabulary: String
     var useHistoryContext: Bool
+    var dictationMode: String
+    var useTextReplacements: Bool
+    var textReplacements: String
+    var insertionMethod: String
+    var smartSpacing: Bool
+    var activationMode: String
+    var useAppProfiles: Bool
+    var appProfiles: [AppProfile]
+    var saveHistory: Bool
 
     var normalizedLanguage: String? {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// The globally-selected output mode (falls back to clean for unknown values).
+    var mode: DictationMode { DictationMode(rawValue: dictationMode) ?? .clean }
+    var activation: ActivationMode { ActivationMode(rawValue: activationMode) ?? .hold }
+    var insertion: InsertionMethod { InsertionMethod(rawValue: insertionMethod) ?? .paste }
+
     static var current: AppSettingsSnapshot {
         registerDefaults()
         let defaults = UserDefaults.standard
+        let profiles = defaults.data(forKey: AppSettingsKeys.appProfiles)
+            .flatMap { try? JSONDecoder().decode([AppProfile].self, from: $0) } ?? []
         return AppSettingsSnapshot(
             whisperExecutablePath: defaults.string(forKey: AppSettingsKeys.whisperExecutablePath) ?? Defaults.whisperExecutablePath,
             modelPath: defaults.string(forKey: AppSettingsKeys.modelPath) ?? Defaults.modelPath,
@@ -46,7 +77,16 @@ struct AppSettingsSnapshot: Equatable {
             polishWithAI: defaults.object(forKey: AppSettingsKeys.polishWithAI) as? Bool ?? Defaults.polishWithAI,
             polishModelPath: defaults.string(forKey: AppSettingsKeys.polishModelPath) ?? Defaults.polishModelPath,
             customVocabulary: defaults.string(forKey: AppSettingsKeys.customVocabulary) ?? Defaults.customVocabulary,
-            useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext
+            useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext,
+            dictationMode: defaults.string(forKey: AppSettingsKeys.dictationMode) ?? Defaults.dictationMode,
+            useTextReplacements: defaults.object(forKey: AppSettingsKeys.useTextReplacements) as? Bool ?? Defaults.useTextReplacements,
+            textReplacements: defaults.string(forKey: AppSettingsKeys.textReplacements) ?? Defaults.textReplacements,
+            insertionMethod: defaults.string(forKey: AppSettingsKeys.insertionMethod) ?? Defaults.insertionMethod,
+            smartSpacing: defaults.object(forKey: AppSettingsKeys.smartSpacing) as? Bool ?? Defaults.smartSpacing,
+            activationMode: defaults.string(forKey: AppSettingsKeys.activationMode) ?? Defaults.activationMode,
+            useAppProfiles: defaults.object(forKey: AppSettingsKeys.useAppProfiles) as? Bool ?? Defaults.useAppProfiles,
+            appProfiles: profiles,
+            saveHistory: defaults.object(forKey: AppSettingsKeys.saveHistory) as? Bool ?? Defaults.saveHistory
         )
     }
 
@@ -62,7 +102,15 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.polishWithAI: Defaults.polishWithAI,
             AppSettingsKeys.polishModelPath: Defaults.polishModelPath,
             AppSettingsKeys.customVocabulary: Defaults.customVocabulary,
-            AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext
+            AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext,
+            AppSettingsKeys.dictationMode: Defaults.dictationMode,
+            AppSettingsKeys.useTextReplacements: Defaults.useTextReplacements,
+            AppSettingsKeys.textReplacements: Defaults.textReplacements,
+            AppSettingsKeys.insertionMethod: Defaults.insertionMethod,
+            AppSettingsKeys.smartSpacing: Defaults.smartSpacing,
+            AppSettingsKeys.activationMode: Defaults.activationMode,
+            AppSettingsKeys.useAppProfiles: Defaults.useAppProfiles,
+            AppSettingsKeys.saveHistory: Defaults.saveHistory
         ])
     }
 
@@ -78,5 +126,13 @@ struct AppSettingsSnapshot: Equatable {
         static let polishModelPath = "~/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
         static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
         static let useHistoryContext = true  // feed recent transcripts as context bias
+        static let dictationMode = DictationMode.clean.rawValue
+        static let useTextReplacements = false
+        static let textReplacements = ""
+        static let insertionMethod = InsertionMethod.paste.rawValue
+        static let smartSpacing = false  // opt-in: needs accessibility to read caret context
+        static let activationMode = ActivationMode.hold.rawValue
+        static let useAppProfiles = false
+        static let saveHistory = true
     }
 }

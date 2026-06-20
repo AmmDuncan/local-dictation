@@ -2,12 +2,13 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// The four states the dictation overlay can show.
+/// The states the dictation overlay can show.
 enum DictationPhase: Equatable {
     case listening
     case transcribing
     case done
     case error
+    case cancelled
 }
 
 @MainActor
@@ -31,15 +32,29 @@ final class OverlayController {
     private var levelProvider: (() -> Double)?
 
     private static let originDefaultsKey = "overlayOrigin"
-    private let panelWidth: CGFloat = 404
 
-    private func height(for phase: DictationPhase) -> CGFloat {
+    /// Transparent breathing room around the visible card so the SwiftUI drop
+    /// shadow + halo render in full instead of being clipped by the panel's
+    /// rectangular bounds (which showed as a hard "box" cutting off the shadow).
+    /// `OverlayView` pads by exactly this; the panel size includes it on every
+    /// edge. Keep the two in sync.
+    static let shadowMargin: CGFloat = 40
+    private static let cardWidth: CGFloat = 384
+    private let panelWidth: CGFloat = OverlayController.cardWidth + OverlayController.shadowMargin * 2
+
+    /// Visible card height per phase. The panel adds `shadowMargin` top + bottom.
+    private func cardHeight(for phase: DictationPhase) -> CGFloat {
         switch phase {
-        case .listening: 196
-        case .transcribing: 150
-        case .done: 240
-        case .error: 214
+        case .listening: 204  // taller for the 3-line tailing transcript
+        case .transcribing: 130
+        case .done: 220
+        case .error: 194
+        case .cancelled: 120
         }
+    }
+
+    private func panelHeight(for phase: DictationPhase) -> CGFloat {
+        cardHeight(for: phase) + Self.shadowMargin * 2
     }
 
     func showListening(detail: String, levelProvider: @escaping () -> Double) {
@@ -63,6 +78,11 @@ final class OverlayController {
         state.actionTitle = actionTitle
         state.action = action
         present(phase: .error, title: "Couldn't dictate", detail: message)
+    }
+
+    func showCancelled() {
+        stopLevelUpdates()
+        present(phase: .cancelled, title: "Cancelled", detail: "Nothing was typed")
     }
 
     /// Update the rolling partial transcript without changing phase.
@@ -95,7 +115,7 @@ final class OverlayController {
 
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.setContentSize(NSSize(width: panelWidth, height: height(for: phase)))
+        panel.setContentSize(NSSize(width: panelWidth, height: panelHeight(for: phase)))
         panel.ignoresMouseEvents = phase != .error
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
@@ -124,7 +144,7 @@ final class OverlayController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: height(for: .listening)),
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight(for: .listening)),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false

@@ -23,7 +23,24 @@ fi
 
 # Build + package the signed app. SHORT_VERSION drives CFBundleShortVersionString;
 # CFBundleVersion is the commit count (monotonic, drives Sparkle's comparison).
+# Pass DEVELOPER_ID_IDENTITY through so the notarization path (build-app.sh) can
+# sign with a Developer ID + hardened runtime when notarizing.
 SHORT_VERSION="$VERSION" bash "$PROJECT_DIR/scripts/package.sh"
+
+# Notarize (opt-in): needs a paid Apple Developer account. Set NOTARY_PROFILE to
+# a stored notarytool keychain profile (`xcrun notarytool store-credentials`) AND
+# build with DEVELOPER_ID_IDENTITY so the app is Developer-ID + hardened-runtime
+# signed. When unset we skip — friends right-click-Open (the current default).
+if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+    echo "Notarizing → submitting to Apple (profile '$NOTARY_PROFILE')…"
+    xcrun notarytool submit "$DIST/LocalDictation.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$PROJECT_DIR/LocalDictation.app"
+    # Re-zip so the published archive carries the stapled ticket.
+    ( cd "$PROJECT_DIR" && ditto -c -k --keepParent "LocalDictation.app" "$DIST/LocalDictation.zip" )
+    echo "Notarized + stapled."
+else
+    echo "Skipping notarization (NOTARY_PROFILE unset) — self-signed distribution (right-click-Open)."
+fi
 
 # Stage just the zip and generate a signed appcast whose enclosure points at the
 # GitHub release asset URL for this tag.

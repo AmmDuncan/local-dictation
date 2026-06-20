@@ -289,7 +289,27 @@ PLIST
 # identity (scripts/setup-signing.sh) keeps Microphone/Accessibility grants
 # across rebuilds; ad-hoc is the fallback (resets permissions each build).
 SIGN_IDENTITY="Local Dictation Dev"
-if security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
+# Notarization path (opt-in): set DEVELOPER_ID_IDENTITY to a "Developer ID
+# Application: …" cert to sign with hardened runtime for `xcrun notarytool`
+# (see scripts/release.sh). Requires a paid Apple Developer account — when unset,
+# we keep the tested self-signed flow (friends right-click-Open, no notarization).
+RUNTIME_OPTS=()
+ENTITLEMENTS_ARG=()
+if [[ -n "${DEVELOPER_ID_IDENTITY:-}" ]]; then
+    SIGN_AS="$DEVELOPER_ID_IDENTITY"
+    RUNTIME_OPTS=(--options runtime --timestamp)
+    ENT="$PROJECT_DIR/.build/ld-entitlements.plist"
+    cat > "$ENT" <<'PL'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.device.audio-input</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict></plist>
+PL
+    ENTITLEMENTS_ARG=(--entitlements "$ENT")
+    echo "Signing with Developer ID (hardened runtime) for notarization: $DEVELOPER_ID_IDENTITY"
+elif security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then
     SIGN_AS="$SIGN_IDENTITY"
     echo "Signing with stable identity: $SIGN_IDENTITY"
 else
@@ -298,20 +318,20 @@ else
 fi
 
 for nested in "$FRAMEWORKS_DIR"/*.dylib "$FRAMEWORKS_DIR"/*.so "$HELPERS_DIR"/*; do
-    [[ -e "$nested" ]] && codesign --force --sign "$SIGN_AS" "$nested"
+    [[ -e "$nested" ]] && codesign --force ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_AS" "$nested"
 done
 
 # Sparkle's nested helpers must be signed inside-out before the bundle.
 SP="$FRAMEWORKS_DIR/Sparkle.framework"
 if [[ -d "$SP" ]]; then
-    codesign --force --sign "$SIGN_AS" "$SP/Versions/B/XPCServices/Downloader.xpc" 2>/dev/null || true
-    codesign --force --sign "$SIGN_AS" "$SP/Versions/B/XPCServices/Installer.xpc" 2>/dev/null || true
-    codesign --force --sign "$SIGN_AS" "$SP/Versions/B/Autoupdate"
-    codesign --force --deep --sign "$SIGN_AS" "$SP/Versions/B/Updater.app"
-    codesign --force --sign "$SIGN_AS" "$SP"
+    codesign --force ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_AS" "$SP/Versions/B/XPCServices/Downloader.xpc" 2>/dev/null || true
+    codesign --force ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_AS" "$SP/Versions/B/XPCServices/Installer.xpc" 2>/dev/null || true
+    codesign --force ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_AS" "$SP/Versions/B/Autoupdate"
+    codesign --force --deep ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_AS" "$SP/Versions/B/Updater.app"
+    codesign --force ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_AS" "$SP"
 fi
 
-codesign --force --deep --sign "$SIGN_AS" "$APP_DIR"
+codesign --force --deep ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} ${ENTITLEMENTS_ARG[@]+"${ENTITLEMENTS_ARG[@]}"} --sign "$SIGN_AS" "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR" && echo "Signature OK"
 
 echo "Built $APP_DIR (v$SHORT_VERSION build $BUILD_VERSION)"

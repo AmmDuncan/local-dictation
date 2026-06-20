@@ -71,7 +71,9 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     }
 
     func startRecording() async throws {
-        guard await PermissionStatus.requestMicrophoneAccess() else {
+        // Permission is requested once, up front, in AppModel.beginHold. Here we
+        // only verify it (non-prompting) so a second system dialog never appears.
+        guard PermissionStatus.isMicrophoneAuthorized else {
             throw AudioRecordingError.permissionDenied
         }
 

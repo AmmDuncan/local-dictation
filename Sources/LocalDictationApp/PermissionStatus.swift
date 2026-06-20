@@ -8,6 +8,13 @@ enum PermissionStatus {
         AXIsProcessTrusted()
     }
 
+    /// Whether microphone access is already granted — a non-prompting check, so
+    /// downstream code (the recorder) can verify without triggering a second
+    /// system dialog after `requestMicrophoneAccess()` already asked.
+    static var isMicrophoneAuthorized: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
     static func requestMicrophoneAccess() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:

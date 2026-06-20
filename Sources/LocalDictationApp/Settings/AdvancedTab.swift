@@ -1,3 +1,4 @@
+import LocalDictationCore
 import SwiftUI
 
 struct AdvancedTab: View {
@@ -5,6 +6,10 @@ struct AdvancedTab: View {
     @Binding var modelPath: String
     @Binding var customVocabulary: String
     @Binding var useHistoryContext: Bool
+    @Binding var insertionMethod: String
+    @Binding var smartSpacing: Bool
+    @Binding var useTextReplacements: Bool
+    @Binding var textReplacements: String
 
     var body: some View {
         Form {
@@ -22,6 +27,30 @@ struct AdvancedTab: View {
                 }
                 Toggle("Use recent transcripts as context", isOn: $useHistoryContext)
                     .help("Bias recognition toward words from your recent dictations. All on-device.")
+            }
+
+            Section("Insertion") {
+                Picker("Insert text by", selection: $insertionMethod) {
+                    Text("Pasting (fast)").tag(InsertionMethod.paste.rawValue)
+                    Text("Typing keystrokes").tag(InsertionMethod.keystroke.rawValue)
+                }
+                .help("Keystroke typing works in terminals, password fields, and apps that block paste — and never touches your clipboard. Pasting is faster for long text.")
+                Toggle("Smart spacing & capitalization", isOn: $smartSpacing)
+                    .help("Read the text around your cursor (Accessibility) to lowercase a mid-sentence continuation and add a leading space automatically.")
+            }
+
+            Section {
+                Toggle("Enable text replacements", isOn: $useTextReplacements)
+                if useTextReplacements {
+                    TextEditor(text: $textReplacements)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 80)
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.3)))
+                }
+            } header: {
+                Text("Text replacements")
+            } footer: {
+                Text("One rule per line, e.g. `teh => the` or `my address => 12 Oak Street`. Whole-word, case-insensitive; applied after transcription. Distinct from vocabulary (which biases recognition).")
             }
 
             Section {

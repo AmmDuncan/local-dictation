@@ -5,6 +5,7 @@ struct MenuBarView: View {
     var model: AppModel
     @ObservedObject var updater: UpdaterModel
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -31,6 +32,7 @@ struct MenuBarView: View {
 
             Divider()
 
+            Button("Dictation History…") { openHistoryWindow() }
             Button("Check for Updates…") { updater.checkForUpdates() }
                 .disabled(!updater.canCheckForUpdates)
 
@@ -92,6 +94,12 @@ struct MenuBarView: View {
     private func openSettingsWindow() {
         NSApp.setActivationPolicy(.regular)
         openSettings()
+        NSApp.activate()
+    }
+
+    private func openHistoryWindow() {
+        NSApp.setActivationPolicy(.regular)
+        openWindow(id: "history")
         NSApp.activate()
     }
 }

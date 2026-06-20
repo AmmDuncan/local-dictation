@@ -11,6 +11,7 @@ public enum DictationWorkflowState: Equatable, Sendable, CustomStringConvertible
     case transcribing
     case pasting(String)
     case failed(String)
+    case cancelled
 
     public var description: String {
         switch self {
@@ -24,6 +25,8 @@ public enum DictationWorkflowState: Equatable, Sendable, CustomStringConvertible
             "Pasting \(text)"
         case let .failed(message):
             "Failed: \(message)"
+        case .cancelled:
+            "Cancelled"
         }
     }
 }
@@ -61,19 +64,25 @@ public final class DictationWorkflow: @unchecked Sendable {
     private let inserter: TextInserting
     private let cleanupOptions: TranscriptCleaner.Options?
     private let polisher: TextPolishing?
+    /// Deterministic transform applied AFTER polish, just before insertion — e.g.
+    /// user text replacements / snippet expansion. Runs after polish so an
+    /// expansion can't trip the polish word-divergence guardrail.
+    private let postProcess: (@Sendable (String) -> String)?
 
     public init(
         recorder: AudioRecording,
         transcriber: TranscriptionEngine,
         inserter: TextInserting,
         cleanupOptions: TranscriptCleaner.Options? = nil,
-        polisher: TextPolishing? = nil
+        polisher: TextPolishing? = nil,
+        postProcess: (@Sendable (String) -> String)? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.inserter = inserter
         self.cleanupOptions = cleanupOptions
         self.polisher = polisher
+        self.postProcess = postProcess
     }
 
     public func beginRecording() async throws {
@@ -90,6 +99,20 @@ public final class DictationWorkflow: @unchecked Sendable {
             setState(.failed(error.localizedDescription))
             throw error
         }
+    }
+
+    /// Abort an in-progress recording without transcribing or inserting anything.
+    /// Stops the recorder, discards the captured audio, and leaves the workflow
+    /// in `.cancelled`. A no-op unless currently recording.
+    public func cancelRecording() async {
+        guard state == .recording else {
+            return
+        }
+        if let audioFile = try? await recorder.stopRecording() {
+            try? FileManager.default.removeItem(at: audioFile)
+        }
+        setLastTranscript(nil)
+        setState(.cancelled)
     }
 
     public func finishRecording() async throws {
@@ -130,6 +153,15 @@ public final class DictationWorkflow: @unchecked Sendable {
             // input unchanged on any failure, so it can never break insertion.
             if let polisher {
                 insertText = await polisher.polish(insertText)
+            }
+            // Deterministic post-process (text replacements / snippets), after
+            // polish so an expansion can't trip the polish guardrail.
+            if let postProcess {
+                insertText = postProcess(insertText)
+            }
+            guard !insertText.isEmpty else {
+                setState(.failed("No speech was detected."))
+                return
             }
 
             setLastTranscript(transcript)

@@ -21,21 +21,57 @@ final class AppModel {
     private var recorder: AudioFileRecorder?
     private var previewTask: Task<Void, Never>?
     private var isFinishing = false
+    /// True while a dictation is starting up (perms → recorder warm). A release or
+    /// Escape that arrives in this window is deferred via `pendingEnd` and applied
+    /// once startup finishes — fixes the fast tap-release race.
+    private var isStarting = false
+    private var pendingEnd: PendingEnd = .none
+    private var escapeMonitor: Any?
+    private var localEscapeMonitor: Any?
     /// Rolling recent transcripts, persisted, used to bias whisper toward the
     /// user's own words (fewer mishearings). See RecognitionContext.
     private var history: [String] = UserDefaults.standard.stringArray(forKey: "dictationHistory") ?? []
 
+    private enum PendingEnd { case none, finish, cancel }
+
     init() {
         KeyboardShortcuts.onKeyDown(for: .holdToDictate) { [weak self] in
             Task { @MainActor in
-                await self?.beginHold()
+                guard let self else { return }
+                // Toggle mode: key-down flips recording on/off. Hold mode: starts.
+                if AppSettingsSnapshot.current.activation == .toggle, self.isRecording || self.isStarting {
+                    await self.endHold()
+                } else {
+                    await self.beginHold()
+                }
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .holdToDictate) { [weak self] in
             Task { @MainActor in
-                await self?.endHold()
+                guard let self, AppSettingsSnapshot.current.activation == .hold else { return }
+                await self.endHold()
             }
+        }
+
+        // Escape aborts an in-progress dictation (discard, paste nothing). Global
+        // monitor needs accessibility/input-monitoring, which dictation already
+        // requires; the local monitor covers the rare case our own UI has focus.
+        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            Task { @MainActor in
+                guard let self, self.isRecording || self.isStarting else { return }
+                await self.cancelHold()
+            }
+        }
+        // Global monitor fires only for events sent to OTHER apps; the local one
+        // covers the case our own window (Settings/History) has focus — so the two
+        // are mutually exclusive, never double-firing. Both retained for lifetime.
+        localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53, let self, self.isRecording || self.isStarting {
+                Task { @MainActor in await self.cancelHold() }
+            }
+            return event
         }
 
         NotificationCenter.default.addObserver(
@@ -47,9 +83,27 @@ final class AppModel {
             }
         }
 
+        // External control surface (SIGUSR1/2 via AppDelegate, future hooks).
+        DictationControl.toggle = { [weak self] in
+            Task { @MainActor in await self?.toggleDictation() }
+        }
+        DictationControl.cancel = { [weak self] in
+            Task { @MainActor in await self?.cancelHold() }
+        }
+
         let settings = AppSettingsSnapshot.current
         warmUpServer(settings: settings)
         warmUpPolishServer(settings: settings)
+    }
+
+    /// Programmatic start/stop (automation/signals), independent of the hold vs
+    /// toggle hotkey setting.
+    func toggleDictation() async {
+        if isRecording || isStarting {
+            await endHold()
+        } else {
+            await beginHold()
+        }
     }
 
     /// Start whisper-server in the background so the model is resident before the
@@ -79,21 +133,25 @@ final class AppModel {
     }
 
     func beginHold() async {
-        guard !isRecording, !isFinishing else {
+        guard !isRecording, !isFinishing, !isStarting else {
             return
         }
 
+        isStarting = true
+        pendingEnd = .none
         let settings = AppSettingsSnapshot.current
         errorMessage = nil
         lastTranscript = ""
 
         guard await PermissionStatus.requestMicrophoneAccess() else {
+            isStarting = false
             fail("Microphone permission is required.")
             return
         }
 
         if settings.pasteOnRelease, !PermissionStatus.isAccessibilityTrusted {
             PermissionStatus.promptForAccessibilityIfNeeded()
+            isStarting = false
             fail("Accessibility permission is required for paste insertion.")
             return
         }
@@ -105,8 +163,6 @@ final class AppModel {
         self.workflow = workflow
 
         do {
-            status = "Listening"
-            isRecording = true
             if settings.showOverlay {
                 overlayController.showListening(detail: "") { [weak self] in
                     self?.recorder?.currentLevel ?? 0
@@ -114,9 +170,24 @@ final class AppModel {
             }
             try await workflow.beginRecording()
         } catch {
-            isRecording = false
+            isStarting = false
+            self.workflow = nil
+            self.recorder = nil
+            if settings.showOverlay { overlayController.hide(after: 0) }
             fail(error.localizedDescription)
             return
+        }
+
+        // Recording is live — only now is it safe to honor end/cancel.
+        isStarting = false
+        isRecording = true
+        status = "Listening"
+
+        // A release or Escape that arrived during startup is applied now.
+        switch pendingEnd {
+        case .finish: pendingEnd = .none; await finishCurrent(); return
+        case .cancel: pendingEnd = .none; await cancelCurrent(); return
+        case .none: break
         }
 
         // Capture is live — now do the slower setup the final pass needs.
@@ -128,7 +199,46 @@ final class AppModel {
         }
     }
 
+    /// Stop and transcribe (hold released / toggled off). Deferred if a dictation
+    /// is still starting up.
     func endHold() async {
+        if isStarting { pendingEnd = .finish; return }
+        await finishCurrent()
+    }
+
+    /// Abort and discard (Escape). Deferred if a dictation is still starting up.
+    func cancelHold() async {
+        if isStarting { pendingEnd = .cancel; return }
+        await cancelCurrent()
+    }
+
+    private func cancelCurrent() async {
+        guard isRecording, !isFinishing, let workflow else {
+            return
+        }
+        isRecording = false
+        isFinishing = true
+        status = "Cancelled"
+
+        let pendingPreview = previewTask
+        previewTask = nil
+        pendingPreview?.cancel()
+        await pendingPreview?.value
+
+        await workflow.cancelRecording()
+        errorMessage = nil
+        status = "Idle"
+        if AppSettingsSnapshot.current.showOverlay {
+            overlayController.showCancelled()
+            overlayController.hide(after: 1.2)
+        }
+
+        isFinishing = false
+        self.workflow = nil
+        self.recorder = nil
+    }
+
+    private func finishCurrent() async {
         guard isRecording, !isFinishing, let workflow else {
             return
         }
@@ -178,6 +288,7 @@ final class AppModel {
         // The final pass prefers the resident server, waiting out a cold model
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
+        let resolved = effectiveProfile(settings: settings)
         let prompt = contextPrompt(settings: settings)
         let transcriber = ResolvingTranscriptionEngine(
             serverManager: serverManager,
@@ -188,22 +299,66 @@ final class AppModel {
             prompt: prompt
         )
 
-        let inserter: TextInserting = settings.pasteOnRelease ? ClipboardInserter() : PreviewOnlyInserter()
+        let inserter = makeInserter(settings: settings)
 
         let recorder = AudioFileRecorder()
         self.recorder = recorder
 
-        let polisher: TextPolishing? = settings.polishWithAI
-            ? ServerBackedPolisher(serverManager: llamaManager, serverWait: 30)
+        // Polish runs in the resolved mode. The corrector mode is fed the same
+        // vocab/history context that biases recognition, so it can fix the
+        // mishearings whisper still gets wrong.
+        let polisher: TextPolishing? = resolved.polish
+            ? ServerBackedPolisher(
+                serverManager: llamaManager,
+                serverWait: 30,
+                mode: resolved.mode,
+                context: resolved.mode == .corrector ? prompt : nil
+            )
             : nil
 
         return DictationWorkflow(
             recorder: recorder,
             transcriber: transcriber,
             inserter: inserter,
-            cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil,
-            polisher: polisher
+            cleanupOptions: resolved.cleanUp ? TranscriptCleaner.Options() : nil,
+            polisher: polisher,
+            postProcess: textReplacementsTransform(settings: settings)
         )
+    }
+
+    /// The mode + cleanup + polish to use for this dictation: a per-app profile
+    /// matched to the frontmost (target) app when enabled, else the global
+    /// settings. The frontmost app is the one being dictated INTO — this menu-bar
+    /// accessory never becomes frontmost itself.
+    private func effectiveProfile(settings: AppSettingsSnapshot) -> (mode: DictationMode, cleanUp: Bool, polish: Bool) {
+        guard settings.useAppProfiles, !settings.appProfiles.isEmpty else {
+            return (settings.mode, settings.cleanUpTranscript, settings.polishWithAI)
+        }
+        let fallback = AppProfile(
+            bundleIdentifier: "*", appName: "Default",
+            mode: settings.mode, cleanUp: settings.cleanUpTranscript, polish: settings.polishWithAI
+        )
+        let profile = AppProfileResolver.resolve(
+            bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            profiles: settings.appProfiles,
+            fallback: fallback
+        )
+        return (profile.mode, profile.cleanUp, profile.polish)
+    }
+
+    private func makeInserter(settings: AppSettingsSnapshot) -> TextInserting {
+        guard settings.pasteOnRelease else { return PreviewOnlyInserter() }
+        let base: TextInserting = settings.insertion == .keystroke ? KeystrokeInserter() : ClipboardInserter()
+        // Smart spacing needs to read the caret context (accessibility); when on,
+        // wrap so the text lowercases mid-sentence and spaces cleanly at the caret.
+        return settings.smartSpacing ? CaretAwareInserter(wrapped: base) : base
+    }
+
+    private func textReplacementsTransform(settings: AppSettingsSnapshot) -> (@Sendable (String) -> String)? {
+        guard settings.useTextReplacements else { return nil }
+        let rules = TextReplacements.parse(settings.textReplacements)
+        guard !rules.isEmpty else { return nil }
+        return { TextReplacements.apply(rules, to: $0) }
     }
 
     private func makeConfiguration(settings: AppSettingsSnapshot, timeoutSeconds: TimeInterval = 60, prompt: String? = nil) -> WhisperCLIConfiguration {
@@ -230,6 +385,9 @@ final class AppModel {
     private func recordHistory(_ transcript: String) {
         history = RecognitionContext.appendingHistory(transcript, to: history)
         UserDefaults.standard.set(history, forKey: "dictationHistory")
+        if AppSettingsSnapshot.current.saveHistory {
+            TranscriptHistoryStore.append(transcript)
+        }
     }
 
     /// Periodically transcribes the audio captured so far and shows it in the
@@ -318,9 +476,7 @@ final class AppModel {
     }
 
     private static func openAppSettings() {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        SettingsLauncher.open()
     }
 }
 
@@ -334,10 +490,25 @@ private struct PreviewOnlyInserter: TextInserting {
 private struct ServerBackedPolisher: TextPolishing {
     let serverManager: LlamaServerManager
     let serverWait: TimeInterval
+    var mode: DictationMode = .clean
+    var context: String?
 
     func polish(_ text: String) async -> String {
         guard let baseURL = await serverManager.awaitReady(timeout: serverWait) else { return text }
-        return await LlamaPolishEngine(baseURL: baseURL).polish(text)
+        return await LlamaPolishEngine(baseURL: baseURL, mode: mode, context: context).polish(text)
+    }
+}
+
+/// Wraps another inserter, reading the caret context (via accessibility) and
+/// applying `InsertionFormatter` so the text continues a sentence in lowercase
+/// and spaces cleanly against the preceding word. Falls back to the raw text
+/// whenever the caret context can't be read.
+private struct CaretAwareInserter: TextInserting {
+    let wrapped: TextInserting
+
+    func insert(_ text: String) async throws {
+        let preceding = await MainActor.run { CaretContext.precedingCharacter() }
+        try await wrapped.insert(InsertionFormatter.format(text, precedingCharacter: preceding))
     }
 }
 

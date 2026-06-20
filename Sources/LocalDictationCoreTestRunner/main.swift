@@ -33,6 +33,14 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow fails when recorder throws", testWorkflowRecorderThrows)
         await suite.run("Workflow fails when transcriber throws", testWorkflowTranscriberThrows)
         await suite.run("Workflow skips degenerate (too-short) recording", testWorkflowSkipsDegenerateRecording)
+        await suite.run("Workflow cancel discards recording without inserting", testWorkflowCancelDiscardsRecording)
+        await suite.run("Dictation modes: prompts, context, word-change flag", testDictationModes)
+        await suite.run("Corrector guardrail allows word swaps, rejects expand/summary", testCorrectorGuardrail)
+        await suite.run("Text replacements parse + whole-word apply", testTextReplacements)
+        await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
+        await suite.run("App profile resolves specific over fallback", testAppProfileResolve)
+        await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
+        await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
         suite.finish()
     }
 }
@@ -523,6 +531,201 @@ private func testWorkflowSkipsBlankTranscript() async throws {
 
     try expect(workflow.state == .failed("No speech was detected."), "Expected no-speech failure, got \(workflow.state)")
     try expect(inserter.insertedText == nil, "Expected no text insertion.")
+}
+
+private func testWorkflowCancelDiscardsRecording() async throws {
+    let recorder = StubRecorder()
+    let transcriber = StubTranscriber(transcript: "should not run")
+    let inserter = StubInserter()
+    let workflow = DictationWorkflow(recorder: recorder, transcriber: transcriber, inserter: inserter)
+
+    try await workflow.beginRecording()
+    await workflow.cancelRecording()
+
+    try expect(workflow.state == .cancelled, "Expected cancelled state, got \(workflow.state)")
+    try expect(recorder.didStop, "Recorder should stop on cancel.")
+    try expect(transcriber.audioFile == nil, "Transcriber must not run on cancel.")
+    try expect(inserter.insertedText == nil, "Nothing should be inserted on cancel.")
+    try expect(workflow.lastTranscript == nil, "No transcript should be kept on cancel.")
+
+    // Cancel when not recording is a no-op (stays idle).
+    let idle = DictationWorkflow(
+        recorder: StubRecorder(), transcriber: StubTranscriber(transcript: "x"), inserter: StubInserter()
+    )
+    await idle.cancelRecording()
+    try expect(idle.state == .idle, "Cancel when idle should be a no-op, got \(idle.state)")
+}
+
+private func testDictationModes() throws {
+    try expect(DictationMode.allCases.count == 6, "expected six modes, got \(DictationMode.allCases.count)")
+
+    // Clean mode reproduces the original strict 8-message body.
+    let cleanBody = TranscriptPolisher.chatRequestBody(transcript: "hi", mode: .clean)
+    let cleanJSON = try JSONSerialization.jsonObject(with: cleanBody) as? [String: Any]
+    let cleanMsgs = cleanJSON?["messages"] as? [[String: String]] ?? []
+    try expect(cleanMsgs.count == 8, "clean = system + 3 few-shot pairs + transcript, got \(cleanMsgs.count)")
+    try expect(cleanMsgs.first?["content"] == TranscriptPolisher.systemPrompt, "clean uses the strict system prompt")
+
+    // Code mode steers toward identifiers.
+    try expect(
+        DictationMode.code.systemPrompt().localizedCaseInsensitiveContains("identifier"),
+        "code mode prompt should mention identifiers"
+    )
+
+    // Corrector allows word changes and weaves context in.
+    try expect(DictationMode.corrector.allowsWordChanges, "corrector allows word changes")
+    try expect(!DictationMode.clean.allowsWordChanges, "clean preserves words")
+    let corr = DictationMode.corrector.systemPrompt(context: "Nxabyte, Qwen")
+    try expect(corr.contains("Nxabyte"), "corrector prompt should include context terms")
+    try expect(
+        corr.localizedCaseInsensitiveContains("misheard") || corr.localizedCaseInsensitiveContains("replace"),
+        "corrector prompt should say it may replace misheard words"
+    )
+    try expect(
+        !DictationMode.corrector.systemPrompt().contains("Likely-correct"),
+        "no context block when no context is given"
+    )
+}
+
+private func testCorrectorGuardrail() throws {
+    // Corrector accepts a likely-mishearing fix that the strict guardrail rejects.
+    try expect(
+        TranscriptPolisher.isFaithfulCorrection(
+            polished: "I was vibe coding the whole thing", original: "i was webcoded the whole thing"
+        ),
+        "corrector should accept a same-length word substitution"
+    )
+    try expect(
+        !TranscriptPolisher.isFaithful(
+            polished: "I was vibe coding the whole thing", original: "i was webcoded the whole thing"
+        ),
+        "strict guardrail should reject that word change"
+    )
+    // Corrector still rejects an answer/expansion and a summary.
+    try expect(
+        !TranscriptPolisher.isFaithfulCorrection(
+            polished: "Sure, I can help you book a flight to Paris next week!", original: "book a flight"
+        ),
+        "corrector should reject an expansion/answer"
+    )
+    try expect(
+        !TranscriptPolisher.isFaithfulCorrection(
+            polished: "Done.",
+            original: "so the meeting we scheduled for tuesday has been moved to thursday afternoon"
+        ),
+        "corrector should reject a summary that drops most words"
+    )
+}
+
+private func testTextReplacements() throws {
+    let list = """
+    # comment ignored
+    teh => the
+    btw = by the way
+    my address => 12 Oak Street
+
+    """
+    let rules = TextReplacements.parse(list)
+    try expect(rules.count == 3, "3 rules parsed (comment + blank ignored), got \(rules.count)")
+    try expect(
+        TextReplacements.apply(rules, to: "send teh file btw") == "send the file by the way",
+        "whole-word replacement"
+    )
+    try expect(
+        TextReplacements.apply(rules, to: "BTW hello") == "by the way hello",
+        "case-insensitive match, replacement casing kept"
+    )
+    try expect(
+        TextReplacements.applying(list, to: "my address is here") == "12 Oak Street is here",
+        "phrase trigger expands"
+    )
+    try expect(TextReplacements.apply(rules, to: "theory") == "theory", "must not replace inside a word")
+}
+
+private func testInsertionFormatter() throws {
+    try expect(
+        InsertionFormatter.format("Hello there.", precedingCharacter: nil) == "Hello there.",
+        "start of field is unchanged"
+    )
+    try expect(
+        InsertionFormatter.format("Hello there", precedingCharacter: "o") == " hello there",
+        "mid-sentence continuation is lowercased + spaced"
+    )
+    try expect(
+        InsertionFormatter.format("Hello there", precedingCharacter: ".") == " Hello there",
+        "after a sentence end, capitalization is kept"
+    )
+    try expect(
+        InsertionFormatter.format("hello", precedingCharacter: " ") == "hello",
+        "no double space after existing whitespace"
+    )
+    try expect(
+        InsertionFormatter.format("I think", precedingCharacter: "o") == " I think",
+        "standalone I is preserved"
+    )
+    try expect(
+        InsertionFormatter.format("API call", precedingCharacter: "e") == " API call",
+        "acronym is preserved"
+    )
+}
+
+private func testAppProfileResolve() throws {
+    let def = AppProfile(bundleIdentifier: "*", appName: "Default", mode: .clean, cleanUp: true, polish: false)
+    let xcode = AppProfile(bundleIdentifier: "com.apple.dt.Xcode", appName: "Xcode", mode: .code, cleanUp: true, polish: false)
+    let mail = AppProfile(bundleIdentifier: "com.apple.mail", appName: "Mail", mode: .email, cleanUp: true, polish: true)
+    let profiles = [xcode, mail]
+
+    try expect(
+        AppProfileResolver.resolve(bundleID: "com.apple.dt.Xcode", profiles: profiles, fallback: def).mode == .code,
+        "exact match resolves to its profile"
+    )
+    try expect(
+        AppProfileResolver.resolve(bundleID: "COM.APPLE.MAIL", profiles: profiles, fallback: def).mode == .email,
+        "match is case-insensitive"
+    )
+    try expect(
+        AppProfileResolver.resolve(bundleID: "com.unknown.app", profiles: profiles, fallback: def).mode == .clean,
+        "unknown app falls back"
+    )
+    try expect(
+        AppProfileResolver.resolve(bundleID: nil, profiles: profiles, fallback: def).mode == .clean,
+        "nil bundle falls back"
+    )
+}
+
+private func testTranscriptHistory() throws {
+    let t0 = Date(timeIntervalSince1970: 1_000)
+    var recs: [TranscriptRecord] = []
+    for i in 0..<5 {
+        recs = TranscriptHistory.appending("entry \(i)", to: recs, at: t0.addingTimeInterval(Double(i)), maxEntries: 3)
+    }
+    try expect(recs.count == 3, "history caps at 3, got \(recs.count)")
+    try expect(recs.first?.text == "entry 2", "drops the oldest, got \(recs.first?.text ?? "nil")")
+    recs = TranscriptHistory.appending("   ", to: recs, at: t0)
+    try expect(recs.count == 3, "blank is not added")
+
+    let hits = TranscriptHistory.search(recs, query: "ENTRY 4")
+    try expect(hits.count == 1 && hits.first?.text == "entry 4", "case-insensitive search finds entry 4")
+    let all = TranscriptHistory.search(recs, query: "  ")
+    try expect(all.first?.text == "entry 4", "empty query returns newest first")
+}
+
+private func testKeystrokeChunks() throws {
+    try expect(KeystrokeInserter.chunks(of: "", size: 5).isEmpty, "empty text → no chunks")
+    let chunks = KeystrokeInserter.chunks(of: "abcdefg", size: 3)
+    try expect(chunks.count == 3, "7 chars / 3 = 3 chunks, got \(chunks.count)")
+    try expect(chunks[0].count == 3 && chunks[2].count == 1, "chunk sizes should be 3,3,1")
+    let joined = chunks.flatMap { $0 }
+    try expect(String(utf16CodeUnits: joined, count: joined.count) == "abcdefg", "chunks reconstruct the text")
+
+    // A surrogate pair (emoji) must never be split across a chunk boundary.
+    let emoji = KeystrokeInserter.chunks(of: "ab📍cd", size: 3)
+    for chunk in emoji {
+        let s = String(utf16CodeUnits: chunk, count: chunk.count)
+        try expect(Array(s.utf16) == chunk, "each chunk must be valid UTF-16 (no split surrogate), got \(chunk)")
+    }
+    let emojiJoined = emoji.flatMap { $0 }
+    try expect(String(utf16CodeUnits: emojiJoined, count: emojiJoined.count) == "ab📍cd", "chunks reconstruct emoji text")
 }
 
 private func temporaryExecutable(body: String = "exit 0\n") throws -> URL {

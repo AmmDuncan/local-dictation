@@ -1,4 +1,5 @@
 @preconcurrency import KeyboardShortcuts
+import LocalDictationCore
 import SwiftUI
 
 struct GeneralTab: View {
@@ -9,7 +10,12 @@ struct GeneralTab: View {
     @Binding var polishWithAI: Bool
     var polishStore: PolishModelStore
     @Binding var language: String
+    @Binding var dictationMode: String
+    @Binding var activationMode: String
+    @Binding var saveHistory: Bool
     var refresh: () -> Void
+
+    private var selectedMode: DictationMode { DictationMode(rawValue: dictationMode) ?? .clean }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,7 +24,13 @@ struct GeneralTab: View {
 
             Form {
                 Section("Shortcut") {
-                    KeyboardShortcuts.Recorder("Hold to dictate", name: .holdToDictate)
+                    KeyboardShortcuts.Recorder("Dictation key", name: .holdToDictate)
+                        .help("⌃Space is the default. Note: macOS also uses ⌃Space to switch input sources — if you have more than one input source, pick a different key here.")
+                    Picker("Activation", selection: $activationMode) {
+                        Text("Hold to talk").tag(ActivationMode.hold.rawValue)
+                        Text("Tap to start / stop").tag(ActivationMode.toggle.rawValue)
+                    }
+                    .help("Hold: record while the key is down. Toggle: tap once to start, again to stop. Esc cancels either way.")
                 }
 
                 Section("Output") {
@@ -33,6 +45,16 @@ struct GeneralTab: View {
 
                     if polishWithAI {
                         polishModelRow
+                        Picker("Mode", selection: $dictationMode) {
+                            ForEach(DictationMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode.rawValue)
+                            }
+                        }
+                        .help("How the AI shapes your text. Corrector may fix misheard words; the others keep your exact wording.")
+                        Text(selectedMode.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Picker("Language", selection: $language) {
                         Text("Auto-detect").tag("auto")
@@ -44,6 +66,11 @@ struct GeneralTab: View {
                         Text("Portuguese").tag("pt")
                     }
                     .help("Pick the language you speak, or let Whisper detect it.")
+                }
+
+                Section("History") {
+                    Toggle("Save dictation history", isOn: $saveHistory)
+                        .help("Keep a searchable, text-only history of your dictations (no audio). Open it from the menu-bar icon.")
                 }
             }
             .formStyle(.grouped)

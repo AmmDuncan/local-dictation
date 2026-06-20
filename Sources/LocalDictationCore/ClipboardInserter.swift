@@ -17,11 +17,14 @@ public protocol PasteCommandSending: AnyObject, Sendable {
 
 public enum PasteInsertionError: Error, Equatable, Sendable, CustomStringConvertible {
     case pasteCommandFailed
+    case keystrokeFailed
 
     public var description: String {
         switch self {
         case .pasteCommandFailed:
             "The paste command could not be sent to the active app."
+        case .keystrokeFailed:
+            "The text could not be typed into the active app."
         }
     }
 }

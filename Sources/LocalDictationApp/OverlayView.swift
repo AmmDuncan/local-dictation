@@ -90,9 +90,12 @@ struct OverlayView: View {
                         .strokeBorder(isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.07))
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .shadow(color: .black.opacity(0.5), radius: 28, y: 16)
+                .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
         }
-        .padding(10)
+        // Transparent breathing room so the shadow + halo render fully instead of
+        // being clipped to a hard box by the panel bounds. Matches the panel size
+        // computed in OverlayController (shadowMargin on every edge).
+        .padding(OverlayController.shadowMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { breathe = true }
     }
@@ -141,7 +144,7 @@ struct OverlayView: View {
                 .fill(isError ? Brand.error : Brand.signal)
                 .frame(width: 34, height: 34)
                 .overlay(
-                    Image(systemName: isError ? "exclamationmark.triangle.fill" : "waveform")
+                    Image(systemName: headerIcon)
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(Brand.onSignal)
                 )
@@ -178,12 +181,21 @@ struct OverlayView: View {
         .overlay(Capsule().strokeBorder(Brand.emerald.opacity(0.22)))
     }
 
+    private var headerIcon: String {
+        switch state.phase {
+        case .error: "exclamationmark.triangle.fill"
+        case .cancelled: "xmark"
+        default: "waveform"
+        }
+    }
+
     private var subtitle: String {
         switch state.phase {
         case .listening: "Speak now — I'm hearing you"
         case .transcribing: "Processing your words locally"
         case .done: "Typed at your cursor"
         case .error: "Can't continue yet"
+        case .cancelled: "Discarded — nothing typed"
         }
     }
 
@@ -196,7 +208,21 @@ struct OverlayView: View {
         case .transcribing: transcribingBody
         case .done: doneBody
         case .error: errorBody
+        case .cancelled: cancelledBody
         }
+    }
+
+    private var cancelledBody: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(inkDim)
+            Text("Recording discarded")
+                .font(.system(size: 14))
+                .foregroundStyle(inkDim)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var listeningBody: some View {
@@ -264,15 +290,19 @@ struct OverlayView: View {
 // MARK: - Tailing transcript
 
 /// Live partial transcript that keeps the newest words in view: the text
-/// bottom-aligns inside a fixed two-line window, and older lines clip and fade
-/// out the top as you keep speaking — a tailing "scroll", never the default
+/// bottom-aligns inside a fixed three-line window, and older lines scroll up and
+/// fade out the top as you keep speaking — a tailing "scroll", never the default
 /// tail-truncation that would hide the latest words behind a trailing "…".
+///
+/// The window shows ~3 lines (more recent context than the old 2-line cut), the
+/// top line ghosts out through a soft gradient rather than clipping mid-glyph,
+/// and growth is eased so new words glide up instead of snapping.
 private struct TailingTranscript: View {
     var text: String
     var ink: Color
     var inkDim: Color
 
-    private let windowHeight: CGFloat = 44  // ~two lines at 16.5pt + lineSpacing
+    private let windowHeight: CGFloat = 70  // ~three lines at 16.5pt + lineSpacing
     private var isEmpty: Bool { text.isEmpty }
 
     var body: some View {
@@ -286,25 +316,32 @@ private struct TailingTranscript: View {
             .frame(maxWidth: .infinity, minHeight: windowHeight, maxHeight: windowHeight, alignment: .bottomLeading)
             .clipped()                                          // older lines overflow + clip out the top
             .mask(
+                // Ghost the oldest visible line: fully transparent at the very top,
+                // ramping to opaque over the first line so old context stays
+                // legible-but-receding instead of being chopped at a hard edge.
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.18),
+                        .init(color: .black.opacity(0.35), location: 0.16),
+                        .init(color: .black, location: 0.42),
                         .init(color: .black, location: 1),
                     ],
                     startPoint: .top, endPoint: .bottom
                 )
             )
+            .animation(.easeOut(duration: 0.16), value: text)  // glide, don't snap
             .accessibilityLabel(isEmpty ? "Listening" : text)
     }
 }
 
 // MARK: - Waveform
 
+private let waveBarCount = 24
+
 private struct WaveBars: View {
     var level: Double
-    private let count = 24
-    @State private var levels: [Double] = (0..<24).map { 0.14 + 0.34 * abs(sin(Double($0) * 0.7)) }
+    private let count = waveBarCount
+    @State private var levels: [Double] = (0..<waveBarCount).map { 0.14 + 0.34 * abs(sin(Double($0) * 0.7)) }
 
     /// Right→left scroll cadence for the bar history. Decoupled from the 30Hz
     /// mic-level sampling so the wave glides calmly instead of racing across.

@@ -2,6 +2,48 @@
 import LocalDictationCore
 import SwiftUI
 
+/// Opens the Settings window reliably from anywhere (menu + overlay error
+/// action). For an accessory app `NSApp.sendAction(showSettingsWindow:)` is
+/// flaky, so we capture SwiftUI's `openSettings` action at launch and call that;
+/// the selector is only a last-resort fallback.
+@MainActor
+enum SettingsLauncher {
+    static var openAction: (() -> Void)?
+
+    static func open() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        if let openAction {
+            openAction()
+        } else {
+            let sel = NSApp.responds(to: Selector(("showSettingsWindow:")))
+                ? Selector(("showSettingsWindow:"))
+                : Selector(("showPreferencesWindow:"))
+            NSApp.sendAction(sel, to: nil, from: nil)
+        }
+    }
+}
+
+/// Opens the History window (captured `openWindow` action, same pattern).
+@MainActor
+enum HistoryWindowLauncher {
+    static var openAction: (() -> Void)?
+
+    static func open() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        openAction?()
+    }
+}
+
+/// External control surface for scripting/automation. AppModel registers these;
+/// the SIGUSR1/SIGUSR2 handlers (AppDelegate) and any future hooks call them.
+@MainActor
+enum DictationControl {
+    static var toggle: (() -> Void)?
+    static var cancel: (() -> Void)?
+}
+
 @main
 struct LocalDictationApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -13,10 +55,17 @@ struct LocalDictationApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Local Dictation", systemImage: "mic") {
+        MenuBarExtra {
             MenuBarView(model: model, updater: updater)
+        } label: {
+            MenuBarLabel()
         }
         .menuBarExtraStyle(.window)
+
+        Window("Dictation History", id: "history") {
+            HistoryView()
+        }
+        .windowResizability(.contentSize)
 
         Settings {
             SettingsView()
@@ -24,8 +73,40 @@ struct LocalDictationApp: App {
     }
 }
 
+/// The menu-bar icon. Also the earliest always-present SwiftUI view, so it's
+/// where we capture the `openSettings` / `openWindow` actions for the launchers.
+private struct MenuBarLabel: View {
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: "mic")
+            .onAppear {
+                SettingsLauncher.openAction = { openSettings() }
+                HistoryWindowLauncher.openAction = { openWindow(id: "history") }
+            }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shotWindow: NSWindow?
+    private var signalSources: [DispatchSourceSignal] = []
+
+    /// Scriptable control: SIGUSR1 toggles dictation, SIGUSR2 cancels it, so the
+    /// app can be driven headlessly (e.g. `kill -USR1 $(pgrep -f LocalDictation)`)
+    /// from Raycast/Alfred/shell without a hotkey. DispatchSource delivers the
+    /// signal on the main queue, where it's safe to touch UI/AppModel.
+    @MainActor
+    private func installSignalControls() {
+        for (sig, handler) in [(SIGUSR1, { DictationControl.toggle?() }),
+                               (SIGUSR2, { DictationControl.cancel?() })] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { MainActor.assumeIsolated { handler() } }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -48,6 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
 
+        // New-install defaults (no-op for existing users).
+        FirstRunSetup.applyIfNeeded()
+
         // Point the bundled whisper-cli at its bundled ggml backend plugins.
         WhisperLocator.ensureBackendsLinked()
 
@@ -68,6 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+
+        installSignalControls()
     }
 
     #if DEBUG
@@ -143,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func captureOverlay(to path: String) {
         NSApp.setActivationPolicy(.regular)
         let hosting = NSHostingView(rootView: OverlayPreview())
-        let size = NSSize(width: 460, height: 880)
+        let size = NSSize(width: 520, height: 1320)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled], backing: .buffered, defer: false
@@ -176,14 +262,15 @@ private struct OverlayPreview: View {
                 startPoint: .top, endPoint: .bottom
             )
             VStack(spacing: 16) {
-                cell(.listening, "She sells sea shells by the sea shore, and the shells she sells are surely seashells, so I'm sure she sells seashore shells.", 0.6, 196)
-                cell(.transcribing, "", 0, 150)
-                cell(.done, "She sells sea shells by the sea shore.", 0, 240)
+                cell(.listening, "She sells sea shells by the sea shore, and the shells she sells are surely seashells, so I'm sure she sells seashore shells.", 0.6, 284)
+                cell(.transcribing, "", 0, 210)
+                cell(.done, "She sells sea shells by the sea shore.", 0, 300)
                 errorCell()
+                cell(.cancelled, "", 0, 200)
             }
             .padding(24)
         }
-        .frame(width: 460, height: 880)
+        .frame(width: 520, height: 1320)
     }
 
     @MainActor
@@ -193,7 +280,7 @@ private struct OverlayPreview: View {
         state.title = title(for: phase)
         state.detail = detail
         state.level = level
-        return OverlayView(state: state).frame(width: 404, height: height)
+        return OverlayView(state: state).frame(width: 464, height: height)
     }
 
     @MainActor
@@ -203,7 +290,7 @@ private struct OverlayPreview: View {
         state.title = "Microphone is off"
         state.detail = "Local Dictation needs the microphone to transcribe. Grant access in System Settings — it stays on your Mac."
         state.actionTitle = "Open Settings"
-        return OverlayView(state: state).frame(width: 404, height: 214)
+        return OverlayView(state: state).frame(width: 464, height: 274)
     }
 
     private func title(for phase: DictationPhase) -> String {
@@ -212,6 +299,7 @@ private struct OverlayPreview: View {
         case .transcribing: "Transcribing"
         case .done: "Inserted"
         case .error: "Error"
+        case .cancelled: "Cancelled"
         }
     }
 }
