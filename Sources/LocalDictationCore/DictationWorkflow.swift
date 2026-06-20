@@ -54,15 +54,18 @@ public final class DictationWorkflow: @unchecked Sendable {
     private let recorder: AudioRecording
     private let transcriber: TranscriptionEngine
     private let inserter: TextInserting
+    private let cleanupOptions: TranscriptCleaner.Options?
 
     public init(
         recorder: AudioRecording,
         transcriber: TranscriptionEngine,
-        inserter: TextInserting
+        inserter: TextInserting,
+        cleanupOptions: TranscriptCleaner.Options? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.inserter = inserter
+        self.cleanupOptions = cleanupOptions
     }
 
     public func beginRecording() async throws {
@@ -97,7 +100,10 @@ public final class DictationWorkflow: @unchecked Sendable {
             // Only type real speech. Non-speech (silence, whistle, noise) that
             // whisper renders as annotations or bare punctuation produces nothing
             // insertable → treat as no speech rather than typing junk.
-            let insertText = WhisperTranscriptParser.strippedForInsertion(transcript)
+            var insertText = WhisperTranscriptParser.strippedForInsertion(transcript)
+            if let cleanupOptions {
+                insertText = TranscriptCleaner.clean(insertText, options: cleanupOptions)
+            }
             guard !insertText.isEmpty else {
                 setState(.failed("No speech was detected."))
                 return

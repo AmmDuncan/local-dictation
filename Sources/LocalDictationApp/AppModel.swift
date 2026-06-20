@@ -162,7 +162,8 @@ final class AppModel {
         return DictationWorkflow(
             recorder: recorder,
             transcriber: transcriber,
-            inserter: inserter
+            inserter: inserter,
+            cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil
         )
     }
 

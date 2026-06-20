@@ -13,6 +13,8 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Whisper CLI rejects missing audio file", testWhisperCLIRejectsMissingAudioFile)
         await suite.run("Whisper CLI times out a hung process", testWhisperCLITimesOutHungProcess)
         await suite.run("TranscriptionError surfaces friendly localizedDescription", testTranscriptionErrorLocalizedDescription)
+        await suite.run("Cleaner removes fillers + fixes caps/spacing", testTranscriptCleanerBasics)
+        await suite.run("Cleaner preserves meaning + safe tokens", testTranscriptCleanerSafety)
         await suite.run("Whisper args omit language for auto/empty/nil", testWhisperArgsOmitLanguage)
         await suite.run("Whisper args clamp bad beam size", testWhisperArgsClampBeam)
         await suite.run("Parser falls through whitespace-only sidecar", testParserWhitespaceSidecarFallsThrough)
@@ -204,6 +206,38 @@ private func testTranscriptionErrorLocalizedDescription() throws {
     try expect(
         !error.localizedDescription.contains("couldn’t be completed"),
         "localizedDescription should not be the bridged NSError fallback"
+    )
+}
+
+private func testTranscriptCleanerBasics() throws {
+    let cases: [(String, String)] = [
+        ("Um, hello there.", "Hello there."),
+        ("i think uh this works", "I think this works"),
+        ("hello  world ,nice", "Hello world, nice"),
+        ("first sentence. second one", "First sentence. Second one"),
+        ("um uh um", ""),  // filler-only collapses to nothing
+    ]
+    for (input, expected) in cases {
+        let got = TranscriptCleaner.clean(input)
+        try expect(got == expected, "clean(\"\(input)\") == \"\(got)\", expected \"\(expected)\"")
+    }
+}
+
+private func testTranscriptCleanerSafety() throws {
+    // Meaning-preserving: never reorders or drops real words.
+    try expect(
+        TranscriptCleaner.clean("send it to jane not john") == "Send it to jane not john",
+        "cleaner must not reword/reorder content"
+    )
+    // "mm" is millimetres here, not a filler — must survive.
+    try expect(
+        TranscriptCleaner.clean("the rain was 5 mm today") == "The rain was 5 mm today",
+        "cleaner must not eat 'mm' (units)"
+    )
+    // Filler removal can be turned off.
+    try expect(
+        TranscriptCleaner.clean("um okay", options: .init(removeFillers: false)) == "Um okay",
+        "removeFillers:false should keep fillers"
     )
 }
 

@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.pasteOnRelease) private var pasteOnRelease = AppSettingsSnapshot.Defaults.pasteOnRelease
     @AppStorage(AppSettingsKeys.showOverlay) private var showOverlay = AppSettingsSnapshot.Defaults.showOverlay
     @AppStorage(AppSettingsKeys.inputDeviceUID) private var inputDeviceUID = AppSettingsSnapshot.Defaults.inputDeviceUID
+    @AppStorage(AppSettingsKeys.cleanUpTranscript) private var cleanUpTranscript = AppSettingsSnapshot.Defaults.cleanUpTranscript
 
     @State private var readiness = ReadinessModel()
     @State private var store = ModelStore()
@@ -17,6 +18,7 @@ struct SettingsView: View {
                 readiness: readiness,
                 pasteOnRelease: $pasteOnRelease,
                 showOverlay: $showOverlay,
+                cleanUpTranscript: $cleanUpTranscript,
                 language: $language,
                 refresh: refresh
             )

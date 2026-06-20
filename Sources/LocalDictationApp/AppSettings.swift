@@ -7,6 +7,7 @@ enum AppSettingsKeys {
     static let pasteOnRelease = "pasteOnRelease"
     static let showOverlay = "showOverlay"
     static let inputDeviceUID = "inputDeviceUID"
+    static let cleanUpTranscript = "cleanUpTranscript"
 }
 
 struct AppSettingsSnapshot: Equatable {
@@ -16,6 +17,7 @@ struct AppSettingsSnapshot: Equatable {
     var pasteOnRelease: Bool
     var showOverlay: Bool
     var inputDeviceUID: String
+    var cleanUpTranscript: Bool
 
     var normalizedLanguage: String? {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -31,7 +33,8 @@ struct AppSettingsSnapshot: Equatable {
             language: defaults.string(forKey: AppSettingsKeys.language) ?? Defaults.language,
             pasteOnRelease: defaults.object(forKey: AppSettingsKeys.pasteOnRelease) as? Bool ?? Defaults.pasteOnRelease,
             showOverlay: defaults.object(forKey: AppSettingsKeys.showOverlay) as? Bool ?? Defaults.showOverlay,
-            inputDeviceUID: defaults.string(forKey: AppSettingsKeys.inputDeviceUID) ?? Defaults.inputDeviceUID
+            inputDeviceUID: defaults.string(forKey: AppSettingsKeys.inputDeviceUID) ?? Defaults.inputDeviceUID,
+            cleanUpTranscript: defaults.object(forKey: AppSettingsKeys.cleanUpTranscript) as? Bool ?? Defaults.cleanUpTranscript
         )
     }
 
@@ -42,7 +45,8 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.language: Defaults.language,
             AppSettingsKeys.pasteOnRelease: Defaults.pasteOnRelease,
             AppSettingsKeys.showOverlay: Defaults.showOverlay,
-            AppSettingsKeys.inputDeviceUID: Defaults.inputDeviceUID
+            AppSettingsKeys.inputDeviceUID: Defaults.inputDeviceUID,
+            AppSettingsKeys.cleanUpTranscript: Defaults.cleanUpTranscript
         ])
     }
 
@@ -53,5 +57,6 @@ struct AppSettingsSnapshot: Equatable {
         static let pasteOnRelease = true
         static let showOverlay = true
         static let inputDeviceUID = ""  // empty = system default input
+        static let cleanUpTranscript = true
     }
 }
