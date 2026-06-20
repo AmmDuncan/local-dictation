@@ -16,6 +16,7 @@ final class AppModel {
 
     private let overlayController = OverlayController()
     private let serverManager = WhisperServerManager()
+    private let llamaManager = LlamaServerManager()
     private var workflow: DictationWorkflow?
     private var recorder: AudioFileRecorder?
     private var previewTask: Task<Void, Never>?
@@ -37,10 +38,15 @@ final class AppModel {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.serverManager.stop() }
+            MainActor.assumeIsolated {
+                self?.serverManager.stop()
+                self?.llamaManager.stop()
+            }
         }
 
-        warmUpServer(settings: AppSettingsSnapshot.current)
+        let settings = AppSettingsSnapshot.current
+        warmUpServer(settings: settings)
+        warmUpPolishServer(settings: settings)
     }
 
     /// Start whisper-server in the background so the model is resident before the
@@ -52,6 +58,21 @@ final class AppModel {
             return
         }
         serverManager.ensureRunning(modelPath: model, executablePath: server)
+    }
+
+    /// Start (or stop) the resident llama-server for the optional LLM polish pass.
+    /// Only runs when polish is enabled and both the model + executable exist.
+    private func warmUpPolishServer(settings: AppSettingsSnapshot) {
+        guard settings.polishWithAI else {
+            llamaManager.stop()
+            return
+        }
+        let model = settings.polishModelPath.expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: model),
+              let server = WhisperLocator.resolvedLlamaServer() else {
+            return
+        }
+        llamaManager.ensureRunning(modelPath: model, executablePath: server)
     }
 
     func beginHold() async {
@@ -76,6 +97,7 @@ final class AppModel {
 
         WhisperLocator.ensureBackendsLinked()
         warmUpServer(settings: settings)  // (re)starts if the model changed
+        warmUpPolishServer(settings: settings)
         let workflow = makeWorkflow(settings: settings)
         self.workflow = workflow
 
@@ -159,11 +181,16 @@ final class AppModel {
         let recorder = AudioFileRecorder()
         self.recorder = recorder
 
+        let polisher: TextPolishing? = settings.polishWithAI
+            ? ServerBackedPolisher(serverManager: llamaManager, serverWait: 30)
+            : nil
+
         return DictationWorkflow(
             recorder: recorder,
             transcriber: transcriber,
             inserter: inserter,
-            cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil
+            cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil,
+            polisher: polisher
         )
     }
 
@@ -262,6 +289,19 @@ final class AppModel {
 
 private struct PreviewOnlyInserter: TextInserting {
     func insert(_ text: String) async throws {}
+}
+
+/// Polishes via the resident llama-server, waiting out a cold model load. If the
+/// server isn't available it returns the text unchanged (LlamaPolishEngine also
+/// falls back on any failure), so polish never blocks or corrupts insertion.
+private struct ServerBackedPolisher: TextPolishing {
+    let serverManager: LlamaServerManager
+    let serverWait: TimeInterval
+
+    func polish(_ text: String) async -> String {
+        guard let baseURL = await serverManager.awaitReady(timeout: serverWait) else { return text }
+        return await LlamaPolishEngine(baseURL: baseURL).polish(text)
+    }
 }
 
 /// Resolves the transcription path at call time: prefer the resident

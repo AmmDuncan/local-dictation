@@ -15,6 +15,8 @@ struct LocalDictationCoreTestRunner {
         await suite.run("TranscriptionError surfaces friendly localizedDescription", testTranscriptionErrorLocalizedDescription)
         await suite.run("Cleaner removes fillers + fixes caps/spacing", testTranscriptCleanerBasics)
         await suite.run("Cleaner preserves meaning + safe tokens", testTranscriptCleanerSafety)
+        await suite.run("Polish guardrail accepts faithful, rejects divergent", testPolishGuardrail)
+        await suite.run("Polish request body + response parsing", testPolishRequestAndParsing)
         await suite.run("Whisper args omit language for auto/empty/nil", testWhisperArgsOmitLanguage)
         await suite.run("Whisper args clamp bad beam size", testWhisperArgsClampBeam)
         await suite.run("Parser falls through whitespace-only sidecar", testParserWhitespaceSidecarFallsThrough)
@@ -206,6 +208,57 @@ private func testTranscriptionErrorLocalizedDescription() throws {
     try expect(
         !error.localizedDescription.contains("couldn’t be completed"),
         "localizedDescription should not be the bridged NSError fallback"
+    )
+}
+
+private func testPolishRequestAndParsing() throws {
+    // Request body carries system prompt, the few-shot turns, and the transcript last.
+    let body = TranscriptPolisher.chatRequestBody(transcript: "um hello there")
+    let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+    let messages = json?["messages"] as? [[String: String]] ?? []
+    try expect(messages.first?["role"] == "system", "first message should be system")
+    try expect(messages.last?["role"] == "user", "last message should be the user transcript")
+    try expect(messages.last?["content"] == "um hello there", "last message should carry the transcript")
+    try expect((json?["temperature"] as? Double) == 0, "temperature should be 0")
+    try expect(messages.count == 8, "system + 3 few-shot pairs + transcript = 8 messages")
+
+    // Response parsing pulls choices[0].message.content.
+    let sample = Data(#"{"choices":[{"message":{"role":"assistant","content":"Hello there."}}]}"#.utf8)
+    try expect(TranscriptPolisher.parseContent(sample) == "Hello there.", "should parse content")
+
+    // Contractions fold so apostrophe styling isn't seen as new content.
+    try expect(
+        TranscriptPolisher.isFaithful(polished: "Don't be late.", original: "dont be late"),
+        "contraction styling should stay faithful"
+    )
+}
+
+private func testPolishGuardrail() throws {
+    // Faithful: only mechanics/fillers changed → accept.
+    try expect(
+        TranscriptPolisher.isFaithful(polished: "Hello there.", original: "um hello there"),
+        "should accept caps/punct + filler removal"
+    )
+    // The model answered the content instead of cleaning it → reject.
+    try expect(
+        !TranscriptPolisher.isFaithful(
+            polished: "Sure, I can help you book a flight to Paris next week!",
+            original: "book a flight"
+        ),
+        "should reject an answer/expansion"
+    )
+    // Translated/reworded into new words → reject.
+    try expect(
+        !TranscriptPolisher.isFaithful(polished: "Bonjour tout le monde", original: "hello everyone today"),
+        "should reject a translation"
+    )
+    // Summarized away most of the text → reject.
+    try expect(
+        !TranscriptPolisher.isFaithful(
+            polished: "Meeting moved.",
+            original: "so the meeting that we had scheduled for tuesday has now been moved to thursday afternoon"
+        ),
+        "should reject a summary that drops most words"
     )
 }
 

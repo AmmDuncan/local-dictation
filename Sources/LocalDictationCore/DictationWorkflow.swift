@@ -55,17 +55,20 @@ public final class DictationWorkflow: @unchecked Sendable {
     private let transcriber: TranscriptionEngine
     private let inserter: TextInserting
     private let cleanupOptions: TranscriptCleaner.Options?
+    private let polisher: TextPolishing?
 
     public init(
         recorder: AudioRecording,
         transcriber: TranscriptionEngine,
         inserter: TextInserting,
-        cleanupOptions: TranscriptCleaner.Options? = nil
+        cleanupOptions: TranscriptCleaner.Options? = nil,
+        polisher: TextPolishing? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.inserter = inserter
         self.cleanupOptions = cleanupOptions
+        self.polisher = polisher
     }
 
     public func beginRecording() async throws {
@@ -107,6 +110,11 @@ public final class DictationWorkflow: @unchecked Sendable {
             guard !insertText.isEmpty else {
                 setState(.failed("No speech was detected."))
                 return
+            }
+            // Optional LLM polish runs last and is self-guarding: it returns the
+            // input unchanged on any failure, so it can never break insertion.
+            if let polisher {
+                insertText = await polisher.polish(insertText)
             }
 
             setLastTranscript(transcript)

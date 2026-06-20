@@ -8,6 +8,8 @@ enum AppSettingsKeys {
     static let showOverlay = "showOverlay"
     static let inputDeviceUID = "inputDeviceUID"
     static let cleanUpTranscript = "cleanUpTranscript"
+    static let polishWithAI = "polishWithAI"
+    static let polishModelPath = "polishModelPath"
 }
 
 struct AppSettingsSnapshot: Equatable {
@@ -18,6 +20,8 @@ struct AppSettingsSnapshot: Equatable {
     var showOverlay: Bool
     var inputDeviceUID: String
     var cleanUpTranscript: Bool
+    var polishWithAI: Bool
+    var polishModelPath: String
 
     var normalizedLanguage: String? {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -34,7 +38,9 @@ struct AppSettingsSnapshot: Equatable {
             pasteOnRelease: defaults.object(forKey: AppSettingsKeys.pasteOnRelease) as? Bool ?? Defaults.pasteOnRelease,
             showOverlay: defaults.object(forKey: AppSettingsKeys.showOverlay) as? Bool ?? Defaults.showOverlay,
             inputDeviceUID: defaults.string(forKey: AppSettingsKeys.inputDeviceUID) ?? Defaults.inputDeviceUID,
-            cleanUpTranscript: defaults.object(forKey: AppSettingsKeys.cleanUpTranscript) as? Bool ?? Defaults.cleanUpTranscript
+            cleanUpTranscript: defaults.object(forKey: AppSettingsKeys.cleanUpTranscript) as? Bool ?? Defaults.cleanUpTranscript,
+            polishWithAI: defaults.object(forKey: AppSettingsKeys.polishWithAI) as? Bool ?? Defaults.polishWithAI,
+            polishModelPath: defaults.string(forKey: AppSettingsKeys.polishModelPath) ?? Defaults.polishModelPath
         )
     }
 
@@ -46,7 +52,9 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.pasteOnRelease: Defaults.pasteOnRelease,
             AppSettingsKeys.showOverlay: Defaults.showOverlay,
             AppSettingsKeys.inputDeviceUID: Defaults.inputDeviceUID,
-            AppSettingsKeys.cleanUpTranscript: Defaults.cleanUpTranscript
+            AppSettingsKeys.cleanUpTranscript: Defaults.cleanUpTranscript,
+            AppSettingsKeys.polishWithAI: Defaults.polishWithAI,
+            AppSettingsKeys.polishModelPath: Defaults.polishModelPath
         ])
     }
 
@@ -58,5 +66,7 @@ struct AppSettingsSnapshot: Equatable {
         static let showOverlay = true
         static let inputDeviceUID = ""  // empty = system default input
         static let cleanUpTranscript = true
+        static let polishWithAI = false  // opt-in: needs the ~1.8GB model + resident llama-server
+        static let polishModelPath = "~/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
     }
 }

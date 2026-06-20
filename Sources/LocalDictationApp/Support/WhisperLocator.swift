@@ -41,6 +41,21 @@ enum WhisperLocator {
         return nil
     }
 
+    /// The `llama-server` executable (bundled, else Homebrew) for the optional
+    /// LLM polish pass. Nil if unavailable → polish stays off.
+    static func resolvedLlamaServer() -> String? {
+        let bundled = Bundle.main.bundlePath + "/Contents/Helpers/llama-server"
+        if FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+        for candidate in ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"] {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     private static var bundledFrameworks: String? {
         let path = Bundle.main.bundlePath + "/Contents/Frameworks"
         var isDir: ObjCBool = false

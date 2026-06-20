@@ -6,6 +6,7 @@ struct GeneralTab: View {
     @Binding var pasteOnRelease: Bool
     @Binding var showOverlay: Bool
     @Binding var cleanUpTranscript: Bool
+    @Binding var polishWithAI: Bool
     @Binding var language: String
     var refresh: () -> Void
 
@@ -26,6 +27,8 @@ struct GeneralTab: View {
                         .help("Show a floating panel with your words as you speak.")
                     Toggle("Clean up dictation", isOn: $cleanUpTranscript)
                         .help("Before typing, remove filler words (um, uh) and fix capitalization & spacing. Never changes your wording.")
+                    Toggle("Polish with AI (experimental)", isOn: $polishWithAI)
+                        .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, and remove fillers — never changing your meaning. Needs the model in ~/models and keeps a resident process (extra RAM). All on-device.")
                     Picker("Language", selection: $language) {
                         Text("Auto-detect").tag("auto")
                         Text("English").tag("en")
