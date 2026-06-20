@@ -10,7 +10,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
 
-SHORT_VERSION="0.1.0"
+SHORT_VERSION="${SHORT_VERSION:-0.1.0}"
 BUILD_VERSION="$(git -C "$PROJECT_DIR" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # Sparkle auto-update. SU_PUBLIC_ED_KEY pairs with the private EdDSA key in the
