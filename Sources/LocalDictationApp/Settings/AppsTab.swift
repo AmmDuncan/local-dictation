@@ -70,9 +70,11 @@ struct AppsTab: View {
                 Button { addApp() } label: { Label("Add app…", systemImage: "plus") }
                     .controlSize(.small)
             }
+            // Only the per-app list is gated on the toggle — NOT the toggle itself,
+            // which lives in the section above and must always be operable.
+            .disabled(!useAppProfiles)
         }
         .formStyle(.grouped)
-        .disabled(!useAppProfiles)
         .onChange(of: model.profiles) { model.save() }
         .onAppear { model.load() }
     }
