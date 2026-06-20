@@ -7,6 +7,7 @@ struct AdvancedTab: View {
     @Binding var customVocabulary: String
     @Binding var useHistoryContext: Bool
     @Binding var useDefaultVocabulary: Bool
+    @Binding var useContextAwareness: Bool
     @Binding var insertionMethod: String
     @Binding var smartSpacing: Bool
     @Binding var useTextReplacements: Bool
@@ -30,6 +31,8 @@ struct AdvancedTab: View {
                     .help("Bias recognition toward words from your recent dictations. All on-device.")
                 Toggle("Use built-in vocabulary", isOn: $useDefaultVocabulary)
                     .help("Bias toward common terms (Claude, GitHub, TypeScript, …) so they transcribe correctly without adding them yourself. Your own vocabulary always takes priority.")
+                Toggle("Use context around your cursor", isOn: $useContextAwareness)
+                    .help("Read the focused app and the text just before your cursor (Accessibility — no screen recording) to bias recognition and fix context-only mishearings, e.g. \"me\" → \"main\" when you dictate a branch after `git push origin`. On-device and transient; secure fields are never read.")
             }
 
             Section("Insertion") {

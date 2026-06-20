@@ -32,6 +32,10 @@ final class AppModel {
     /// user's own words (fewer mishearings). See RecognitionContext.
     private var history: [String] = UserDefaults.standard.stringArray(forKey: "dictationHistory") ?? []
 
+    /// Gathers on-device context (frontmost app + caret text) when context
+    /// awareness is on. AX-only, transient — see AccessibilityContextProvider.
+    private let contextProvider: ContextProvider = AccessibilityContextProvider()
+
     private enum PendingEnd { case none, finish, cancel }
 
     init() {
@@ -156,10 +160,17 @@ final class AppModel {
             return
         }
 
+        // Gather on-device context (frontmost app + caret-preceding text) before
+        // building the workflow so it can bias recognition and gate command-mode
+        // correction. Cheap synchronous AX/NSWorkspace reads (ms) — well under the
+        // server-warmup latency the mic-first ordering actually guards against.
+        // Transient: used to build this dictation's workflow, then dropped.
+        let context = settings.useContextAwareness ? await contextProvider.currentContext() : nil
+
         // Start capturing audio FIRST so the first word isn't clipped. Server
         // warmup / backend linking only matter for the final pass (seconds
         // later), so they must not delay the mic. makeWorkflow is cheap (no I/O).
-        let workflow = makeWorkflow(settings: settings)
+        let workflow = makeWorkflow(settings: settings, context: context)
         self.workflow = workflow
 
         do {
@@ -195,7 +206,7 @@ final class AppModel {
         warmUpServer(settings: settings)  // (re)starts if the model changed
         warmUpPolishServer(settings: settings)
         if settings.showOverlay, let recorder {
-            startPreviewLoop(recorder: recorder, settings: settings)
+            startPreviewLoop(recorder: recorder, settings: settings, context: context)
         }
     }
 
@@ -297,11 +308,11 @@ final class AppModel {
         return "Something went wrong. Please try again."
     }
 
-    private func makeWorkflow(settings: AppSettingsSnapshot) -> DictationWorkflow {
+    private func makeWorkflow(settings: AppSettingsSnapshot, context: DictationContext?) -> DictationWorkflow {
         // The final pass prefers the resident server, waiting out a cold model
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
-        let prompt = contextPrompt(settings: settings)
+        let prompt = contextPrompt(settings: settings, context: context)
         let transcriber = ResolvingTranscriptionEngine(
             serverManager: serverManager,
             configuration: makeConfiguration(settings: settings, timeoutSeconds: 60, prompt: prompt),
@@ -328,8 +339,24 @@ final class AppModel {
         // so they apply whenever any correction is on (cleanup or AI polish) — and
         // keep working even when the AI model is off or its server is unavailable.
         let wantsCorrection = settings.cleanUpTranscript || settings.polishWithAI
-        let preCorrect: (@Sendable (String) -> String)? = wantsCorrection
-            ? { @Sendable text in MishearingCorrections.apply(to: text) }
+        // Context-scoped command mode (e.g. "me" -> "main" after `git push origin`)
+        // runs right after the global-safe layer, gated on the focused app class
+        // and caret text captured for THIS dictation. CommandModeCorrections.apply
+        // is itself a no-op unless the composed line is a branch-taking git command,
+        // so the substitution never touches prose — even in a terminal.
+        let appClass = ContextBias.classify(appName: context?.activeApplicationName)
+        let precedingText = context?.precedingText
+        let commandMode = context != nil && appClass.allowsCommandMode
+        let preCorrect: (@Sendable (String) -> String)? = (wantsCorrection || commandMode)
+            ? { @Sendable text in
+                var corrected = wantsCorrection ? MishearingCorrections.apply(to: text) : text
+                if commandMode {
+                    corrected = CommandModeCorrections.apply(
+                        to: corrected, appClass: appClass, precedingText: precedingText
+                    )
+                }
+                return corrected
+            }
             : nil
 
         return DictationWorkflow(
@@ -369,13 +396,17 @@ final class AppModel {
         )
     }
 
-    /// Whisper context prompt from the user's vocabulary + recent history, to
-    /// bias recognition toward their own words (fewer mishearings). Nil = none.
-    private func contextPrompt(settings: AppSettingsSnapshot) -> String? {
+    /// Whisper context prompt from the user's vocabulary + recent history, plus
+    /// the live on-device context (focused app + caret-proximate text) when
+    /// available, to bias recognition toward their own words and what they're
+    /// typing into (fewer mishearings). Nil = none.
+    private func contextPrompt(settings: AppSettingsSnapshot, context: DictationContext?) -> String? {
+        let promptContext = context.map(ContextBias.promptContext(for:))
         let prompt = RecognitionContext.prompt(
             vocabulary: settings.customVocabulary,
             defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
-            history: settings.useHistoryContext ? history : []
+            history: settings.useHistoryContext ? history : [],
+            context: promptContext
         )
         return prompt.isEmpty ? nil : prompt
     }
@@ -392,9 +423,9 @@ final class AppModel {
     /// overlay, so the user sees a rolling preview instead of waiting for the
     /// final result. Partial text is lower quality than the final pass and may
     /// revise itself as more speech arrives.
-    private func startPreviewLoop(recorder: AudioFileRecorder, settings: AppSettingsSnapshot) {
+    private func startPreviewLoop(recorder: AudioFileRecorder, settings: AppSettingsSnapshot, context: DictationContext?) {
         let language = settings.normalizedLanguage
-        let prompt = contextPrompt(settings: settings)
+        let prompt = contextPrompt(settings: settings, context: context)
         let cleanupOptions: TranscriptCleaner.Options? = settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil
 
         previewTask?.cancel()

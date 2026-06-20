@@ -13,6 +13,7 @@ enum AppSettingsKeys {
     static let customVocabulary = "customVocabulary"
     static let useHistoryContext = "useHistoryContext"
     static let useDefaultVocabulary = "useDefaultVocabulary"
+    static let useContextAwareness = "useContextAwareness"
     static let useTextReplacements = "useTextReplacements"
     static let textReplacements = "textReplacements"
     static let insertionMethod = "insertionMethod"
@@ -39,6 +40,7 @@ struct AppSettingsSnapshot: Equatable {
     var customVocabulary: String
     var useHistoryContext: Bool
     var useDefaultVocabulary: Bool
+    var useContextAwareness: Bool
     var useTextReplacements: Bool
     var textReplacements: String
     var insertionMethod: String
@@ -70,6 +72,7 @@ struct AppSettingsSnapshot: Equatable {
             customVocabulary: defaults.string(forKey: AppSettingsKeys.customVocabulary) ?? Defaults.customVocabulary,
             useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext,
             useDefaultVocabulary: defaults.object(forKey: AppSettingsKeys.useDefaultVocabulary) as? Bool ?? Defaults.useDefaultVocabulary,
+            useContextAwareness: defaults.object(forKey: AppSettingsKeys.useContextAwareness) as? Bool ?? Defaults.useContextAwareness,
             useTextReplacements: defaults.object(forKey: AppSettingsKeys.useTextReplacements) as? Bool ?? Defaults.useTextReplacements,
             textReplacements: defaults.string(forKey: AppSettingsKeys.textReplacements) ?? Defaults.textReplacements,
             insertionMethod: defaults.string(forKey: AppSettingsKeys.insertionMethod) ?? Defaults.insertionMethod,
@@ -93,6 +96,7 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.customVocabulary: Defaults.customVocabulary,
             AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext,
             AppSettingsKeys.useDefaultVocabulary: Defaults.useDefaultVocabulary,
+            AppSettingsKeys.useContextAwareness: Defaults.useContextAwareness,
             AppSettingsKeys.useTextReplacements: Defaults.useTextReplacements,
             AppSettingsKeys.textReplacements: Defaults.textReplacements,
             AppSettingsKeys.insertionMethod: Defaults.insertionMethod,
@@ -115,6 +119,10 @@ struct AppSettingsSnapshot: Equatable {
         static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
         static let useHistoryContext = true  // feed recent transcripts as context bias
         static let useDefaultVocabulary = true  // bias toward common terms (Claude, GitHub, …)
+        // Use the focused app + caret-preceding text to bias recognition and enable
+        // context-scoped command-mode corrections (e.g. "me" -> "main" after
+        // `git push origin`). AX-only (no new permission), transient, on by default.
+        static let useContextAwareness = true
         static let useTextReplacements = false
         static let textReplacements = ""
         static let insertionMethod = InsertionMethod.paste.rawValue
