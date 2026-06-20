@@ -110,6 +110,53 @@ final class AppModel {
         let settings = AppSettingsSnapshot.current
         warmUpServer(settings: settings)
         warmUpPolishServer(settings: settings)
+
+        // Mic-less pipeline test: feed a WAV straight through the real
+        // transcribe → context → correct path (the mic flow is bypassed). Env
+        // LD_PIPELINE_TEST=<wav>; optional LD_PIPELINE_APP / LD_PIPELINE_PRECEDING
+        // / LD_PIPELINE_VISIBLE override the context; result → LD_PIPELINE_OUT.
+        if let wav = ProcessInfo.processInfo.environment["LD_PIPELINE_TEST"] {
+            Task { @MainActor in await self.runPipelineTest(wavPath: wav) }
+        }
+    }
+
+    /// Run a WAV through the real dictation pipeline with no microphone — same
+    /// transcribe → cleanup → correct path as a live dictation, so the context /
+    /// command-mode behaviour can be verified deterministically. Context is the
+    /// real frontmost app unless overridden via env for a controlled test. Writes
+    /// the corrected transcript and exits. Diagnostic-only (env-gated).
+    @MainActor
+    private func runPipelineTest(wavPath: String) async {
+        var settings = AppSettingsSnapshot.current
+        settings.pasteOnRelease = false  // never insert into a real app during a test
+        WhisperLocator.ensureBackendsLinked()
+        warmUpServer(settings: settings)
+
+        let env = ProcessInfo.processInfo.environment
+        var context: DictationContext? = settings.useContextAwareness ? await contextProvider.currentContext() : nil
+        if let app = env["LD_PIPELINE_APP"] {
+            context = DictationContext(
+                activeApplicationName: app,
+                precedingText: env["LD_PIPELINE_PRECEDING"],
+                visibleText: env["LD_PIPELINE_VISIBLE"]
+            )
+        }
+
+        let recorder = FixedFileRecorder(source: URL(fileURLWithPath: wavPath))
+        let workflow = makeWorkflow(settings: settings, context: context, recorderOverride: recorder)
+        try? await workflow.beginRecording()
+        try? await workflow.finishRecording()
+
+        let result = workflow.lastTranscript ?? "(no speech detected / nil)"
+        let line = """
+        app=\(context?.activeApplicationName ?? "nil")
+        preceding=\(context?.precedingText.map { "\"\($0)\"" } ?? "nil")
+        visibleChars=\(context?.visibleText?.count ?? 0)
+        transcript=\(result)
+        """
+        let out = env["LD_PIPELINE_OUT"] ?? "/tmp/ld-pipeline-out.txt"
+        try? line.write(toFile: out, atomically: true, encoding: .utf8)
+        exit(0)
     }
 
     /// Programmatic start/stop (automation/signals), independent of the hold vs
@@ -322,7 +369,9 @@ final class AppModel {
         return "Something went wrong. Please try again."
     }
 
-    private func makeWorkflow(settings: AppSettingsSnapshot, context: DictationContext?) -> DictationWorkflow {
+    private func makeWorkflow(
+        settings: AppSettingsSnapshot, context: DictationContext?, recorderOverride: AudioRecording? = nil
+    ) -> DictationWorkflow {
         // The final pass prefers the resident server, waiting out a cold model
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
@@ -338,8 +387,16 @@ final class AppModel {
 
         let inserter = makeInserter(settings: settings)
 
-        let recorder = AudioFileRecorder()
-        self.recorder = recorder
+        // recorderOverride feeds a fixed WAV through the real pipeline (the
+        // mic-less pipeline test); normal dictation creates the live recorder.
+        let recorder: AudioRecording
+        if let recorderOverride {
+            recorder = recorderOverride
+        } else {
+            let live = AudioFileRecorder()
+            self.recorder = live
+            recorder = live
+        }
 
         // Polish (when on) tidies formatting only — caps, punctuation, fillers.
         // Mishearing correction is handled deterministically (preCorrect below)
@@ -559,6 +616,21 @@ final class AppModel {
 
 private struct PreviewOnlyInserter: TextInserting {
     func insert(_ text: String) async throws {}
+}
+
+/// Test recorder that feeds a fixed WAV through the workflow instead of the mic.
+/// `finishRecording` deletes the file it's handed (via defer), so each stop
+/// returns a fresh copy of the source — the original survives repeated runs.
+private final class FixedFileRecorder: AudioRecording, @unchecked Sendable {
+    private let source: URL
+    init(source: URL) { self.source = source }
+    func startRecording() async throws {}
+    func stopRecording() async throws -> URL {
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ld-pipeline-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: source, to: copy)
+        return copy
+    }
 }
 
 /// Polishes via the resident llama-server, waiting out a cold model load. If the
