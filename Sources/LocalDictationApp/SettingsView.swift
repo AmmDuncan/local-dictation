@@ -48,7 +48,7 @@ struct SettingsView: View {
             .tabItem { Label("General", systemImage: "gearshape") }
             .tag(SettingsTab.general)
 
-            ModelsTab(store: store, onModelChanged: refresh)
+            ModelsTab(store: store, polishStore: polishStore, onModelChanged: refresh)
                 .tabItem { Label("Models", systemImage: "cpu") }
                 .badge(store.installedIDs.isEmpty ? Text("!") : nil)
                 .tag(SettingsTab.models)

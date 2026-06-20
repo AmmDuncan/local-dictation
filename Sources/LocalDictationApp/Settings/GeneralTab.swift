@@ -80,30 +80,15 @@ struct GeneralTab: View {
 
     @ViewBuilder
     private var polishModelRow: some View {
-        if polishStore.isInstalled {
-            Label("Qwen 3B model ready", systemImage: "checkmark.circle.fill")
+        if polishStore.activeModelInstalled {
+            Label("Polish model: \(polishStore.activeModelName)", systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
-        } else if let progress = polishStore.progress {
-            VStack(alignment: .leading, spacing: 4) {
-                ProgressView(value: progress) {
-                    Text("Downloading Qwen 3B… \(Int(progress * 100))%").font(.caption)
-                }
-                Button("Cancel") { polishStore.cancel() }.controlSize(.small)
-            }
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Polish needs the Qwen 3B model (\(PolishModel.sizeLabel), one-time download).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Download model") { polishStore.download() }.controlSize(.small)
-                if let error = polishStore.error {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            Text("No polish model installed — choose & download one in the Models tab.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
