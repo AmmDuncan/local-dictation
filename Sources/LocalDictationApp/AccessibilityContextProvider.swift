@@ -16,11 +16,14 @@ struct AccessibilityContextProvider: ContextProvider {
     }
 
     @MainActor
-    static func gather() -> DictationContext {
+    static func gather(includeVisibleText: Bool = true) -> DictationContext {
         DictationContext(
             activeApplicationName: NSWorkspace.shared.frontmostApplication?.localizedName,
             focusedElementDescription: CaretContext.focusedRole(),
-            precedingText: CaretContext.precedingText()
+            precedingText: CaretContext.precedingText(),
+            // Surrounding window text (AX-first) — biases recognition even when
+            // there's no caret-preceding text. Bounded; nil for text-less apps.
+            visibleText: includeVisibleText ? WindowTextReader.visibleText() : nil
         )
     }
 }

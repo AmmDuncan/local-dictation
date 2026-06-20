@@ -112,7 +112,7 @@ enum CaretContext {
         let element = focusedRef as! AXUIElement
 
         // Privacy non-negotiable: never read a secure (password) field.
-        guard !isSecure(element) else { return nil }
+        guard !AXSupport.isSecure(element) else { return nil }
 
         var rangeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
@@ -120,16 +120,5 @@ enum CaretContext {
         var range = CFRange()
         guard AXValueGetValue(rangeRef as! AXValue, .cfRange, &range) else { return nil }
         return (element, range.location)
-    }
-
-    @MainActor
-    private static func isSecure(_ element: AXUIElement) -> Bool {
-        func attr(_ name: String) -> String? {
-            var ref: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, name as CFString, &ref) == .success else { return nil }
-            return ref as? String
-        }
-        return attr(kAXRoleAttribute as String) == "AXSecureTextField"
-            || attr(kAXSubroleAttribute as String) == "AXSecureTextField"
     }
 }

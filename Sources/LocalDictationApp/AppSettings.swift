@@ -14,6 +14,7 @@ enum AppSettingsKeys {
     static let useHistoryContext = "useHistoryContext"
     static let useDefaultVocabulary = "useDefaultVocabulary"
     static let useContextAwareness = "useContextAwareness"
+    static let useScreenOCR = "useScreenOCR"
     static let useTextReplacements = "useTextReplacements"
     static let textReplacements = "textReplacements"
     static let insertionMethod = "insertionMethod"
@@ -41,6 +42,7 @@ struct AppSettingsSnapshot: Equatable {
     var useHistoryContext: Bool
     var useDefaultVocabulary: Bool
     var useContextAwareness: Bool
+    var useScreenOCR: Bool
     var useTextReplacements: Bool
     var textReplacements: String
     var insertionMethod: String
@@ -73,6 +75,7 @@ struct AppSettingsSnapshot: Equatable {
             useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext,
             useDefaultVocabulary: defaults.object(forKey: AppSettingsKeys.useDefaultVocabulary) as? Bool ?? Defaults.useDefaultVocabulary,
             useContextAwareness: defaults.object(forKey: AppSettingsKeys.useContextAwareness) as? Bool ?? Defaults.useContextAwareness,
+            useScreenOCR: defaults.object(forKey: AppSettingsKeys.useScreenOCR) as? Bool ?? Defaults.useScreenOCR,
             useTextReplacements: defaults.object(forKey: AppSettingsKeys.useTextReplacements) as? Bool ?? Defaults.useTextReplacements,
             textReplacements: defaults.string(forKey: AppSettingsKeys.textReplacements) ?? Defaults.textReplacements,
             insertionMethod: defaults.string(forKey: AppSettingsKeys.insertionMethod) ?? Defaults.insertionMethod,
@@ -97,6 +100,7 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext,
             AppSettingsKeys.useDefaultVocabulary: Defaults.useDefaultVocabulary,
             AppSettingsKeys.useContextAwareness: Defaults.useContextAwareness,
+            AppSettingsKeys.useScreenOCR: Defaults.useScreenOCR,
             AppSettingsKeys.useTextReplacements: Defaults.useTextReplacements,
             AppSettingsKeys.textReplacements: Defaults.textReplacements,
             AppSettingsKeys.insertionMethod: Defaults.insertionMethod,
@@ -123,6 +127,10 @@ struct AppSettingsSnapshot: Equatable {
         // context-scoped command-mode corrections (e.g. "me" -> "main" after
         // `git push origin`). AX-only (no new permission), transient, on by default.
         static let useContextAwareness = true
+        // OCR the focused window (Vision) as a fallback for apps that expose no
+        // accessibility text (canvas / some Chromium). Off by default: needs Screen
+        // Recording permission, so it's strictly opt-in.
+        static let useScreenOCR = false
         static let useTextReplacements = false
         static let textReplacements = ""
         static let insertionMethod = InsertionMethod.paste.rawValue

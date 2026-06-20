@@ -36,6 +36,18 @@ final class AppModel {
     /// awareness is on. AX-only, transient — see AccessibilityContextProvider.
     private let contextProvider: ContextProvider = AccessibilityContextProvider()
 
+    /// Cached OCR text per focused app, so the slow Vision OCR never blocks the
+    /// mic: the async refresh fills this, and the NEXT dictation in that app reads
+    /// it. Transient (in-memory only). See enrichWithOCR.
+    private var ocrCache: (app: String, text: String, at: Date)?
+    private var ocrTask: Task<Void, Never>?
+    /// AX window text shorter than this counts as "nothing usable" → OCR may fill in.
+    private static let minVisibleTextChars = 24
+    /// A cached OCR result stays usable this long; refreshes are throttled to at
+    /// most one per this gap so a burst of dictations doesn't re-capture each time.
+    private static let ocrCacheTTL: TimeInterval = 30
+    private static let ocrRefreshThrottle: TimeInterval = 6
+
     private enum PendingEnd { case none, finish, cancel }
 
     init() {
@@ -160,12 +172,14 @@ final class AppModel {
             return
         }
 
-        // Gather on-device context (frontmost app + caret-preceding text) before
-        // building the workflow so it can bias recognition and gate command-mode
-        // correction. Cheap synchronous AX/NSWorkspace reads (ms) — well under the
-        // server-warmup latency the mic-first ordering actually guards against.
-        // Transient: used to build this dictation's workflow, then dropped.
-        let context = settings.useContextAwareness ? await contextProvider.currentContext() : nil
+        // Gather on-device context (frontmost app + caret-preceding text + AX
+        // window text) before building the workflow so it can bias recognition and
+        // gate command-mode correction. Cheap synchronous AX/NSWorkspace reads (ms)
+        // — well under the server-warmup latency the mic-first ordering guards
+        // against. OCR (opt-in) is merged from cache only; its refresh is async and
+        // never blocks here. Transient: used to build this dictation, then dropped.
+        let rawContext = settings.useContextAwareness ? await contextProvider.currentContext() : nil
+        let context = enrichWithOCR(rawContext, settings: settings)
 
         // Start capturing audio FIRST so the first word isn't clipped. Server
         // warmup / backend linking only matter for the final pass (seconds
@@ -409,6 +423,40 @@ final class AppModel {
             context: promptContext
         )
         return prompt.isEmpty ? nil : prompt
+    }
+
+    /// Opt-in OCR fallback for apps that expose no AX window text: merge a fresh
+    /// cached OCR for the same app into the context, and kick off a throttled async
+    /// refresh for next time. Never blocks the mic — the slow Vision pass runs in
+    /// the background and only the (instant) cache read happens inline.
+    private func enrichWithOCR(_ context: DictationContext?, settings: AppSettingsSnapshot) -> DictationContext? {
+        // Skip entirely without permission so we never spawn a no-op OCR task.
+        guard settings.useScreenOCR, ScreenOCR.hasPermission,
+              var context, let app = context.activeApplicationName else { return context }
+        // AX already exposed usable window text → no OCR needed.
+        let axText = context.visibleText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard axText.count < Self.minVisibleTextChars else { return context }
+
+        if let cache = ocrCache, cache.app == app, Date().timeIntervalSince(cache.at) < Self.ocrCacheTTL {
+            context.visibleText = cache.text
+        }
+        refreshOCR(for: app)
+        return context
+    }
+
+    /// Refresh the OCR cache for `app` in the background, throttled so a quick run
+    /// of dictations doesn't trigger repeated captures. At most one OCR in flight.
+    private func refreshOCR(for app: String) {
+        if let cache = ocrCache, cache.app == app, Date().timeIntervalSince(cache.at) < Self.ocrRefreshThrottle { return }
+        guard ocrTask == nil else { return }
+        ocrTask = Task { [weak self] in
+            let text = await ScreenOCR.recognizeFocusedWindow()
+            await MainActor.run {
+                guard let self else { return }
+                if let text { self.ocrCache = (app: app, text: text, at: Date()) }
+                self.ocrTask = nil
+            }
+        }
     }
 
     private func recordHistory(_ transcript: String) {

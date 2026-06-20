@@ -39,6 +39,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Mishearing corrections fix names, spare real words", testMishearingCorrections)
         await suite.run("App class classification + command-mode eligibility", testAppClassClassification)
         await suite.run("Context candidate extraction (identifiers, proximity, dedup)", testContextCandidates)
+        await suite.run("Visible-window text → candidates → prompt (P3)", testVisibleTextCandidates)
         await suite.run("Command mode: me->main in command context, left alone in prose", testCommandModeCorrections)
         await suite.run("Recognition prompt folds in live context, weighted + capped", testContextPrompt)
         await suite.run("Workflow command mode: terminal git push me -> main", testWorkflowCommandModeInsertsMain)
@@ -687,6 +688,32 @@ private func testContextCandidates() throws {
     try expect(cands.contains("UserStore.swift"), "visible identifiers are extracted")
     try expect(cands.filter { $0.lowercased() == "feat/login" }.count == 1, "deduped across sources")
     try expect(!cands.contains("On") && !cands.contains("branch") && !cands.contains("develop"), "ordinary words excluded")
+}
+
+private func testVisibleTextCandidates() throws {
+    // P3: AX window text (here, terminal-scrollback style) — branch names,
+    // filenames, and identifiers are surfaced; ordinary prose is dropped. This is
+    // what lets recognition lean toward on-screen terms even with no caret text.
+    let scrollback = """
+    ammiel@host project % git status
+    On branch feature/login-v2
+    Your branch is up to date with origin/main
+    modified:   Sources/AppModel.swift
+    nothing to commit, working tree clean
+    """
+    let cands = ContextBias.candidates(precedingText: nil, visibleText: scrollback)
+    try expect(cands.contains("feature/login-v2"), "branch name extracted from window text")
+    try expect(cands.contains(where: { $0.contains("AppModel.swift") }), "filename extracted")
+    try expect(cands.contains(where: { $0.lowercased().contains("origin/main") }), "origin/main extracted")
+    try expect(!cands.contains("branch") && !cands.contains("nothing"), "ordinary words excluded")
+
+    // promptContext surfaces window-text candidates, and they reach the prompt.
+    let ctx = ContextBias.promptContext(
+        for: DictationContext(activeApplicationName: "Terminal", visibleText: scrollback)
+    )
+    try expect(ctx.candidates.contains("feature/login-v2"), "promptContext carries window-text candidates")
+    let p = RecognitionContext.prompt(vocabulary: "", history: [], context: ctx)
+    try expect(p.contains("feature/login-v2"), "window-text candidate reaches the whisper prompt")
 }
 
 private func testCommandModeCorrections() throws {

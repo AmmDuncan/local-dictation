@@ -17,6 +17,7 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.useHistoryContext) private var useHistoryContext = AppSettingsSnapshot.Defaults.useHistoryContext
     @AppStorage(AppSettingsKeys.useDefaultVocabulary) private var useDefaultVocabulary = AppSettingsSnapshot.Defaults.useDefaultVocabulary
     @AppStorage(AppSettingsKeys.useContextAwareness) private var useContextAwareness = AppSettingsSnapshot.Defaults.useContextAwareness
+    @AppStorage(AppSettingsKeys.useScreenOCR) private var useScreenOCR = AppSettingsSnapshot.Defaults.useScreenOCR
     @AppStorage(AppSettingsKeys.activationMode) private var activationMode = AppSettingsSnapshot.Defaults.activationMode
     @AppStorage(AppSettingsKeys.saveHistory) private var saveHistory = AppSettingsSnapshot.Defaults.saveHistory
     @AppStorage(AppSettingsKeys.insertionMethod) private var insertionMethod = AppSettingsSnapshot.Defaults.insertionMethod
@@ -62,6 +63,7 @@ struct SettingsView: View {
                 useHistoryContext: $useHistoryContext,
                 useDefaultVocabulary: $useDefaultVocabulary,
                 useContextAwareness: $useContextAwareness,
+                useScreenOCR: $useScreenOCR,
                 insertionMethod: $insertionMethod,
                 smartSpacing: $smartSpacing,
                 useTextReplacements: $useTextReplacements,
