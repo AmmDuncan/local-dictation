@@ -1,8 +1,10 @@
+import AppKit
 import AVFoundation
 import SwiftUI
 
 struct AudioInputSection: View {
     @Binding var deviceUID: String
+    var isActive: Bool
 
     @State private var meter = AudioLevelMeter()
     @State private var devices: [AudioInputDevice] = []
@@ -29,13 +31,31 @@ struct AudioInputSection: View {
         .onAppear {
             micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             devices = AudioDevices.inputDevices()
-            meter.start(deviceUID: deviceUID)
+            if isActive { meter.start(deviceUID: deviceUID) }
         }
         .onDisappear {
             meter.stop()
         }
+        // Run the mic-opening meter only while this tab is showing — switching
+        // tabs doesn't fire onDisappear on macOS, so drive it off `isActive`.
+        .onChange(of: isActive) {
+            if isActive {
+                devices = AudioDevices.inputDevices()
+                meter.start(deviceUID: deviceUID)
+            } else {
+                meter.stop()
+            }
+        }
         .onChange(of: deviceUID) {
-            meter.restart(deviceUID: deviceUID)
+            if isActive { meter.restart(deviceUID: deviceUID) }
+        }
+        // Free the mic if the app is backgrounded / Settings window closed while
+        // this tab is open (so Bluetooth headphones return to high quality).
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            meter.stop()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if isActive { meter.start(deviceUID: deviceUID) }
         }
     }
 }

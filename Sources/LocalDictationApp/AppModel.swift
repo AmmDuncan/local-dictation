@@ -317,9 +317,17 @@ private struct ResolvingTranscriptionEngine: TranscriptionEngine {
 
     func transcribe(audioFile: URL) async throws -> String {
         if let baseURL = await serverManager.awaitReady(timeout: serverWait) {
-            return try await WhisperServerTranscriptionEngine(
-                baseURL: baseURL, language: language, timeoutSeconds: timeoutSeconds
-            ).transcribe(audioFile: audioFile)
+            do {
+                return try await WhisperServerTranscriptionEngine(
+                    baseURL: baseURL, language: language, timeoutSeconds: timeoutSeconds
+                ).transcribe(audioFile: audioFile)
+            } catch TranscriptionError.emptyTranscript {
+                // A real "no speech" result — don't waste a cold CLI pass on it.
+                throw TranscriptionError.emptyTranscript
+            } catch {
+                // Any other server hiccup (transient error, busy) → fall back to
+                // the per-call CLI rather than failing the dictation.
+            }
         }
         return try await WhisperCLITranscriptionEngine(configuration: configuration)
             .transcribe(audioFile: audioFile)

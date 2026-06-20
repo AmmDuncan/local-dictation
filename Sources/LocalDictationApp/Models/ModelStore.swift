@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Observation
 
@@ -87,7 +86,7 @@ final class ModelStore {
 
         if let error = error as NSError? {
             if error.code == NSURLErrorCancelled { return }
-            errors[model.id] = Self.friendlyMessage(for: error)
+            errors[model.id] = ModelDownloads.friendlyMessage(for: error)
             return
         }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -116,35 +115,11 @@ final class ModelStore {
     /// it and surfaces an error if it doesn't match the pinned digest.
     private func verifyChecksum(_ model: WhisperModel, at url: URL) {
         Task { @MainActor in
-            let matches = await Self.checksumMatches(url: url, expected: model.sha256)
+            let matches = await ModelDownloads.checksumMatches(url: url, expected: model.sha256)
             guard !matches else { return }
             try? FileManager.default.removeItem(at: url)
             errors[model.id] = "Integrity check failed — the download was corrupted or tampered with. Please try again."
             refresh()
-        }
-    }
-
-    private static func checksumMatches(url: URL, expected: String) async -> Bool {
-        await Task.detached(priority: .utility) {
-            guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
-            defer { try? handle.close() }
-            var hasher = SHA256()
-            while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-                hasher.update(data: chunk)
-            }
-            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-            return digest == expected.lowercased()
-        }.value
-    }
-
-    private static func friendlyMessage(for error: NSError) -> String {
-        switch error.code {
-        case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
-            "No internet connection. Connect and try again."
-        case NSURLErrorTimedOut:
-            "The download timed out. Please try again."
-        default:
-            "Download failed. Please try again."
         }
     }
 

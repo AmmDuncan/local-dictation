@@ -31,6 +31,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow skips blank transcript", testWorkflowSkipsBlankTranscript)
         await suite.run("Workflow fails when recorder throws", testWorkflowRecorderThrows)
         await suite.run("Workflow fails when transcriber throws", testWorkflowTranscriberThrows)
+        await suite.run("Workflow skips degenerate (too-short) recording", testWorkflowSkipsDegenerateRecording)
         suite.finish()
     }
 }
@@ -423,6 +424,18 @@ private func testWorkflowTranscriberThrows() async throws {
     }
 }
 
+private func testWorkflowSkipsDegenerateRecording() async throws {
+    // A too-short tap produces a tiny/empty wav the server 400s on — the workflow
+    // must skip transcription entirely and report no speech.
+    let transcriber = StubTranscriber(transcript: "should not run")
+    let inserter = StubInserter()
+    let workflow = DictationWorkflow(recorder: TinyRecorder(), transcriber: transcriber, inserter: inserter)
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(transcriber.audioFile == nil, "transcriber must not run on a degenerate recording")
+    try expect(inserter.insertedText == nil, "nothing should be inserted for a degenerate recording")
+}
+
 private func testClipboardInserterRestoresPreviousValue() async throws {
     let pasteboard = InMemoryPasteboard(text: "previous")
     let sender = RecordingPasteCommandSender()
@@ -548,6 +561,18 @@ private final class StubRecorder: AudioRecording, @unchecked Sendable {
 
     func stopRecording() async throws -> URL {
         didStop = true
+        // Write a non-degenerate file so the workflow's minimum-audio guard passes
+        // (the workflow deletes it via defer). A real recording is several KB.
+        try Data(count: 2048).write(to: audioFile)
+        return audioFile
+    }
+}
+
+private final class TinyRecorder: AudioRecording, @unchecked Sendable {
+    let audioFile = URL(fileURLWithPath: "/tmp/local-dictation-tiny-\(UUID().uuidString).wav")
+    func startRecording() async throws {}
+    func stopRecording() async throws -> URL {
+        try Data(count: 100).write(to: audioFile)  // degenerate: below the workflow's guard
         return audioFile
     }
 }

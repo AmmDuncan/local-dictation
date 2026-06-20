@@ -7,6 +7,7 @@ struct GeneralTab: View {
     @Binding var showOverlay: Bool
     @Binding var cleanUpTranscript: Bool
     @Binding var polishWithAI: Bool
+    var polishStore: PolishModelStore
     @Binding var language: String
     var refresh: () -> Void
 
@@ -28,7 +29,11 @@ struct GeneralTab: View {
                     Toggle("Clean up dictation", isOn: $cleanUpTranscript)
                         .help("Before typing, remove filler words (um, uh) and fix capitalization & spacing. Never changes your wording.")
                     Toggle("Polish with AI (experimental)", isOn: $polishWithAI)
-                        .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, and remove fillers — never changing your meaning. Needs the model in ~/models and keeps a resident process (extra RAM). All on-device.")
+                        .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, and remove fillers — never changing your meaning. Keeps a resident process (extra RAM). All on-device.")
+
+                    if polishWithAI {
+                        polishModelRow
+                    }
                     Picker("Language", selection: $language) {
                         Text("Auto-detect").tag("auto")
                         Text("English").tag("en")
@@ -44,5 +49,34 @@ struct GeneralTab: View {
             .formStyle(.grouped)
         }
         .onChange(of: pasteOnRelease) { refresh() }
+    }
+
+    @ViewBuilder
+    private var polishModelRow: some View {
+        if polishStore.isInstalled {
+            Label("Qwen 3B model ready", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        } else if let progress = polishStore.progress {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: progress) {
+                    Text("Downloading Qwen 3B… \(Int(progress * 100))%").font(.caption)
+                }
+                Button("Cancel") { polishStore.cancel() }.controlSize(.small)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Polish needs the Qwen 3B model (\(PolishModel.sizeLabel), one-time download).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Download model") { polishStore.download() }.controlSize(.small)
+                if let error = polishStore.error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 }

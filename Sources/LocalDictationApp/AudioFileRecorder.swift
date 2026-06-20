@@ -39,7 +39,10 @@ private final class SingleBufferSource: @unchecked Sendable {
 /// Captures microphone audio into an in-memory 16 kHz mono buffer so it can be
 /// snapshotted for live preview mid-recording, then written to a WAV on stop.
 final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    // Recreated per recording (see startRecording) so it always binds to the
+    // CURRENT default input. A long-lived engine goes stale across audio-route
+    // changes (plugging in headphones) and its tap then captures silence.
+    private var engine = AVAudioEngine()
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: 16_000,
@@ -73,6 +76,10 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         }
 
         clearSamples()
+
+        // Fresh engine each time so it binds to the current default input and
+        // follows route changes (e.g. headphones plugged in since last use).
+        engine = AVAudioEngine()
 
         let input = engine.inputNode
         let deviceUID = AppSettingsSnapshot.current.inputDeviceUID

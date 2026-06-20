@@ -29,6 +29,11 @@ public enum DictationWorkflowState: Equatable, Sendable, CustomStringConvertible
 }
 
 public final class DictationWorkflow: @unchecked Sendable {
+    /// Below this the recording is empty/truncated (header-only ≈ 44 bytes); a
+    /// valid ~0.1s clip is already several KB. Guards against the server's 400 on
+    /// degenerate audio.
+    private static let minimumAudioBytes = 1024
+
     private let lock = NSLock()
     private var _state: DictationWorkflowState = .idle
     private var _lastTranscript: String?
@@ -95,6 +100,16 @@ public final class DictationWorkflow: @unchecked Sendable {
         do {
             let audioFile = try await recorder.stopRecording()
             defer { try? FileManager.default.removeItem(at: audioFile) }
+
+            // A too-short / accidental tap yields an empty or truncated wav that
+            // the transcription server rejects (HTTP 400). Treat anything below a
+            // few milliseconds of audio as no speech instead of erroring out.
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: audioFile.path)[.size]) as? Int ?? 0
+            guard bytes >= Self.minimumAudioBytes else {
+                setState(.failed("No speech was detected."))
+                return
+            }
+
             setState(.transcribing)
 
             let transcript = try await transcriber.transcribe(audioFile: audioFile)

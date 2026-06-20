@@ -1,5 +1,9 @@
 import SwiftUI
 
+private enum SettingsTab: Hashable {
+    case general, models, audio, advanced
+}
+
 struct SettingsView: View {
     @AppStorage(AppSettingsKeys.whisperExecutablePath) private var whisperExecutablePath = AppSettingsSnapshot.Defaults.whisperExecutablePath
     @AppStorage(AppSettingsKeys.modelPath) private var modelPath = AppSettingsSnapshot.Defaults.modelPath
@@ -12,29 +16,36 @@ struct SettingsView: View {
 
     @State private var readiness = ReadinessModel()
     @State private var store = ModelStore()
+    @State private var polishStore = PolishModelStore()
+    @State private var selectedTab: SettingsTab = .general
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             GeneralTab(
                 readiness: readiness,
                 pasteOnRelease: $pasteOnRelease,
                 showOverlay: $showOverlay,
                 cleanUpTranscript: $cleanUpTranscript,
                 polishWithAI: $polishWithAI,
+                polishStore: polishStore,
                 language: $language,
                 refresh: refresh
             )
             .tabItem { Label("General", systemImage: "gearshape") }
+            .tag(SettingsTab.general)
 
             ModelsTab(store: store, onModelChanged: refresh)
                 .tabItem { Label("Models", systemImage: "cpu") }
                 .badge(store.installedIDs.isEmpty ? Text("!") : nil)
+                .tag(SettingsTab.models)
 
-            AudioTab(deviceUID: $inputDeviceUID)
+            AudioTab(deviceUID: $inputDeviceUID, isActive: selectedTab == .audio)
                 .tabItem { Label("Audio", systemImage: "mic") }
+                .tag(SettingsTab.audio)
 
             AdvancedTab(whisperExecutablePath: $whisperExecutablePath, modelPath: $modelPath)
                 .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
+                .tag(SettingsTab.advanced)
         }
         .frame(width: 540, height: 540)
         .onAppear(perform: refresh)
@@ -46,6 +57,7 @@ struct SettingsView: View {
 
     private func refresh() {
         store.refresh()
+        polishStore.refresh()
         readiness.refresh()
     }
 }
