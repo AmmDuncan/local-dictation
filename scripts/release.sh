@@ -62,9 +62,9 @@ cat > "$NOTES_FILE" <<NOTE
 **Install (Apple Silicon, macOS 14+):**
 
 1. Download **LocalDictation-$VERSION.dmg** and open it.
-2. Right-click **"Install Local Dictation.command"** -> Open -> Open. It installs the app and launches it.
+2. **Right-click** "Install Local Dictation.command" -> **Open** -> **Open**. It installs the app to /Applications, clears the download flag, and launches it.
 
-A plain double-click is blocked as "damaged" because this app isn't notarized by Apple — the installer clears that for you. (By hand: drag the app into Applications, then in Terminal run:  xattr -dr com.apple.quarantine /Applications/LocalDictation.app )
+This app isn't notarized by Apple, so opening the .app directly is blocked ("Apple could not verify..."). The installer script avoids that. If you ever still hit the block, open it once via **System Settings -> Privacy & Security -> Open Anyway** (on macOS 15+ that button is the only way — the old right-click-Open and Terminal xattr no longer work for .app bundles). (By hand instead: drag the app into Applications, then in Terminal run:  xattr -dr com.apple.quarantine /Applications/LocalDictation.app )
 
 Then grant Microphone + Accessibility, download a model in Settings -> Models, and hold Control+Space to dictate. Full guide: INSTALL.md.
 NOTE

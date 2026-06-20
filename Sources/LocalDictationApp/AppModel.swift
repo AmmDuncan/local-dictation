@@ -316,11 +316,20 @@ final class AppModel {
         let recorder = AudioFileRecorder()
         self.recorder = recorder
 
-        // Polish (when on) always fixes mishearings, fed the same vocab/history
-        // context that biases recognition — so it catches the names whisper still
-        // gets wrong (e.g. "clot" → "Claude").
+        // Polish (when on) tidies formatting only — caps, punctuation, fillers.
+        // Mishearing correction is handled deterministically (preCorrect below)
+        // and by whisper's vocab bias, because the small model is unreliable at
+        // word substitution (it swaps correct names for unrelated vocab terms).
         let polisher: TextPolishing? = settings.polishWithAI
-            ? ServerBackedPolisher(serverManager: llamaManager, serverWait: 30, context: prompt)
+            ? ServerBackedPolisher(serverManager: llamaManager, serverWait: 30)
+            : nil
+
+        // Deterministic known-mishearing fixes run before polish. Free and exact,
+        // so they apply whenever any correction is on (cleanup or AI polish) — and
+        // keep working even when the AI model is off or its server is unavailable.
+        let wantsCorrection = settings.cleanUpTranscript || settings.polishWithAI
+        let preCorrect: (@Sendable (String) -> String)? = wantsCorrection
+            ? { @Sendable text in MishearingCorrections.apply(to: text) }
             : nil
 
         return DictationWorkflow(
@@ -328,6 +337,7 @@ final class AppModel {
             transcriber: transcriber,
             inserter: inserter,
             cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil,
+            preCorrect: preCorrect,
             polisher: polisher,
             postProcess: textReplacementsTransform(settings: settings)
         )
@@ -478,11 +488,10 @@ private struct PreviewOnlyInserter: TextInserting {
 private struct ServerBackedPolisher: TextPolishing {
     let serverManager: ResidentServerManager
     let serverWait: TimeInterval
-    var context: String?
 
     func polish(_ text: String) async -> String {
         guard let baseURL = await serverManager.awaitReady(timeout: serverWait) else { return text }
-        return await LlamaPolishEngine(baseURL: baseURL, context: context).polish(text)
+        return await LlamaPolishEngine(baseURL: baseURL).polish(text)
     }
 }
 

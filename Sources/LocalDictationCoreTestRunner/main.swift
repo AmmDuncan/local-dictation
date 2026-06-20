@@ -34,7 +34,10 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow fails when transcriber throws", testWorkflowTranscriberThrows)
         await suite.run("Workflow skips degenerate (too-short) recording", testWorkflowSkipsDegenerateRecording)
         await suite.run("Workflow cancel discards recording without inserting", testWorkflowCancelDiscardsRecording)
-        await suite.run("Polish prompt corrects + weaves in context", testPolishPromptCorrects)
+        await suite.run("Workflow surfaces corrected (post-polish) transcript, not raw", testWorkflowSurfacesCorrectedTranscript)
+        await suite.run("Workflow pre-correct runs before polish", testWorkflowPreCorrectRunsBeforePolish)
+        await suite.run("Mishearing corrections fix names, spare real words", testMishearingCorrections)
+        await suite.run("Polish prompt is formatting cleanup only", testPolishPromptCleansOnly)
         await suite.run("Corrector guardrail allows word swaps, rejects expand/summary", testCorrectorGuardrail)
         await suite.run("Text replacements parse + whole-word apply", testTextReplacements)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
@@ -557,21 +560,86 @@ private func testWorkflowCancelDiscardsRecording() async throws {
     try expect(idle.state == .idle, "Cancel when idle should be a no-op, got \(idle.state)")
 }
 
-private func testPolishPromptCorrects() throws {
-    // The single polish prompt: corrector behavior, context woven in when present.
-    let body = TranscriptPolisher.chatRequestBody(transcript: "hi", context: "Nxabyte, Qwen")
+private func testWorkflowSurfacesCorrectedTranscript() async throws {
+    // The corrected (post-polish) text — not the raw transcript — must be what the
+    // app surfaces via lastTranscript (history, menu bar, overlay). This was the
+    // bug: "clot" showed everywhere even though "Claude" was what got typed.
+    let inserter = StubInserter()
+    let polisher = FakePolisher { $0.replacingOccurrences(of: "clot", with: "Claude") }
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "I am coding with clot"),
+        inserter: inserter,
+        polisher: polisher
+    )
+
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+
+    try expect(
+        inserter.insertedText == "I am coding with Claude",
+        "Expected polished text inserted, got \(inserter.insertedText ?? "nil")"
+    )
+    try expect(
+        workflow.lastTranscript == "I am coding with Claude",
+        "lastTranscript must be the corrected text, got \(workflow.lastTranscript ?? "nil")"
+    )
+}
+
+private func testWorkflowPreCorrectRunsBeforePolish() async throws {
+    // Deterministic mishearing fix must run before the polisher, so the polisher
+    // receives the corrected term — not the raw mishearing it would mangle.
+    let inserter = StubInserter()
+    let polisher = FakePolisher { $0 }  // identity: passes its input straight through
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "ship it with clot today"),
+        inserter: inserter,
+        preCorrect: { MishearingCorrections.apply(to: $0) },
+        polisher: polisher
+    )
+
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+
+    try expect(
+        polisher.receivedInput == "ship it with Claude today",
+        "polisher should receive deterministically-corrected text, got \(polisher.receivedInput ?? "nil")"
+    )
+    try expect(
+        inserter.insertedText == "ship it with Claude today",
+        "final inserted text should carry the correction, got \(inserter.insertedText ?? "nil")"
+    )
+}
+
+private func testMishearingCorrections() throws {
+    try expect(MishearingCorrections.apply(to: "I love using clot") == "I love using Claude", "clot -> Claude")
+    try expect(MishearingCorrections.apply(to: "CLOT is great") == "Claude is great", "case-insensitive, replacement casing kept")
+    try expect(MishearingCorrections.apply(to: "open cloud code now") == "open Claude Code now", "multi-word phrase corrected before single word")
+    try expect(MishearingCorrections.apply(to: "claud and clawd") == "Claude and Claude", "claud / clawd variants")
+    try expect(MishearingCorrections.apply(to: "the cloud cover today") == "the cloud cover today", "genuine 'cloud' is left alone")
+    try expect(MishearingCorrections.apply(to: "clothing") == "clothing", "must not match inside a word")
+    // Genuine "clot": "blood clot" is spared; bare "clot" still corrects; inflections untouched.
+    try expect(MishearingCorrections.apply(to: "he has a blood clot") == "he has a blood clot", "'blood clot' kept literal")
+    try expect(MishearingCorrections.apply(to: "Blood Clot risk") == "Blood Clot risk", "'blood clot' guard is case-insensitive")
+    try expect(MishearingCorrections.apply(to: "ask clot about it") == "ask Claude about it", "bare 'clot' still corrects")
+    try expect(MishearingCorrections.apply(to: "clots and clotting") == "clots and clotting", "inflected forms untouched")
+}
+
+private func testPolishPromptCleansOnly() throws {
+    // The polish pass is formatting-only: it must tidy caps/punctuation/fillers and
+    // explicitly forbid word substitution (mishearings are handled before polish).
+    let prompt = TranscriptPolisher.systemPrompt()
+    try expect(prompt.localizedCaseInsensitiveContains("capitalization"), "cleanup prompt should mention capitalization")
+    try expect(prompt.localizedCaseInsensitiveContains("filler"), "cleanup prompt should mention fillers")
+    try expect(prompt.localizedCaseInsensitiveContains("substitute"), "cleanup prompt should forbid substitution explicitly")
+    try expect(!prompt.localizedCaseInsensitiveContains("known terms"), "no vocabulary/known-terms block in cleanup prompt")
+    try expect(!prompt.contains("REPLACE it"), "cleanup prompt must not license replacing words")
+
+    let body = TranscriptPolisher.chatRequestBody(transcript: "hi")
     let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
     let msgs = json?["messages"] as? [[String: String]] ?? []
     try expect(msgs.count == 8, "system + 3 few-shot pairs + transcript = 8, got \(msgs.count)")
-    let system = msgs.first?["content"] ?? ""
-    try expect(system.contains("Nxabyte"), "system prompt should weave in the context terms")
-    try expect(
-        system.localizedCaseInsensitiveContains("misheard") || system.localizedCaseInsensitiveContains("replace"),
-        "polish prompt should say it may replace misheard words"
-    )
-    // Without context there's no dangling "known terms" block.
-    let noCtx = TranscriptPolisher.systemPrompt()
-    try expect(!noCtx.contains("known terms"), "no known-terms block when no context is given")
 }
 
 private func testCorrectorGuardrail() throws {
@@ -839,5 +907,19 @@ private final class StubInserter: TextInserting, @unchecked Sendable {
 
     func insert(_ text: String) async throws {
         insertedText = text
+    }
+}
+
+private final class FakePolisher: TextPolishing, @unchecked Sendable {
+    private let transform: @Sendable (String) -> String
+    private(set) var receivedInput: String?
+
+    init(_ transform: @escaping @Sendable (String) -> String) {
+        self.transform = transform
+    }
+
+    func polish(_ text: String) async -> String {
+        receivedInput = text
+        return transform(text)
     }
 }

@@ -63,6 +63,10 @@ public final class DictationWorkflow: @unchecked Sendable {
     private let transcriber: TranscriptionEngine
     private let inserter: TextInserting
     private let cleanupOptions: TranscriptCleaner.Options?
+    /// Deterministic transform applied BEFORE polish — built-in known-mishearing
+    /// fixes (e.g. "clot" -> "Claude"). Runs first so the polish model sees the
+    /// correct term instead of swapping in an unrelated vocabulary word.
+    private let preCorrect: (@Sendable (String) -> String)?
     private let polisher: TextPolishing?
     /// Deterministic transform applied AFTER polish, just before insertion — e.g.
     /// user text replacements / snippet expansion. Runs after polish so an
@@ -74,6 +78,7 @@ public final class DictationWorkflow: @unchecked Sendable {
         transcriber: TranscriptionEngine,
         inserter: TextInserting,
         cleanupOptions: TranscriptCleaner.Options? = nil,
+        preCorrect: (@Sendable (String) -> String)? = nil,
         polisher: TextPolishing? = nil,
         postProcess: (@Sendable (String) -> String)? = nil
     ) {
@@ -81,6 +86,7 @@ public final class DictationWorkflow: @unchecked Sendable {
         self.transcriber = transcriber
         self.inserter = inserter
         self.cleanupOptions = cleanupOptions
+        self.preCorrect = preCorrect
         self.polisher = polisher
         self.postProcess = postProcess
     }
@@ -149,11 +155,22 @@ public final class DictationWorkflow: @unchecked Sendable {
                 setState(.failed("No speech was detected."))
                 return
             }
-            // Optional LLM polish runs last and is self-guarding: it returns the
+            // Deterministic known-mishearing fixes BEFORE polish, so the model
+            // sees the correct term and doesn't swap in an unrelated vocab word.
+            if let preCorrect {
+                insertText = preCorrect(insertText)
+            }
+            // Optional LLM polish runs next and is self-guarding: it returns the
             // input unchanged on any failure, so it can never break insertion.
             if let polisher {
                 insertText = await polisher.polish(insertText)
             }
+            // The corrected transcript — what was said, with mishearings fixed —
+            // is what we surface to the user (history, menu bar, overlay). It is
+            // captured here, before the post-process expansion below, and replaces
+            // the raw transcript that used to be shown (which made corrections
+            // invisible even though the fixed text was what actually got typed).
+            let correctedTranscript = insertText
             // Deterministic post-process (text replacements / snippets), after
             // polish so an expansion can't trip the polish guardrail.
             if let postProcess {
@@ -164,8 +181,8 @@ public final class DictationWorkflow: @unchecked Sendable {
                 return
             }
 
-            setLastTranscript(transcript)
-            setState(.pasting(transcript))
+            setLastTranscript(correctedTranscript)
+            setState(.pasting(correctedTranscript))
             try await inserter.insert(insertText)
             setState(.idle)
         } catch {
