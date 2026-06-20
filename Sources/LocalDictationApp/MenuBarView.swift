@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     var model: AppModel
+    @ObservedObject var updater: UpdaterModel
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -29,6 +30,9 @@ struct MenuBarView: View {
             }
 
             Divider()
+
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheckForUpdates)
 
             HStack {
                 Button("Settings") { openSettingsWindow() }

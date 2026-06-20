@@ -12,7 +12,8 @@ let package = Package(
         .executable(name: "LocalDictation", targets: ["LocalDictationApp"])
     ],
     dependencies: [
-        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", exact: "1.12.0")
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", exact: "1.12.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")
     ],
     targets: [
         .target(
@@ -22,7 +23,8 @@ let package = Package(
             name: "LocalDictationApp",
             dependencies: [
                 "LocalDictationCore",
-                .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts")
+                .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+                .product(name: "Sparkle", package: "Sparkle")
             ]
         ),
         .executableTarget(

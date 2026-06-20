@@ -6,6 +6,7 @@ import SwiftUI
 struct LocalDictationApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
+    @StateObject private var updater = UpdaterModel()
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -13,7 +14,7 @@ struct LocalDictationApp: App {
 
     var body: some Scene {
         MenuBarExtra("Local Dictation", systemImage: "mic") {
-            MenuBarView(model: model)
+            MenuBarView(model: model, updater: updater)
         }
         .menuBarExtraStyle(.window)
 
