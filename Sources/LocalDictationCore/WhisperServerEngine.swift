@@ -7,11 +7,13 @@ public struct WhisperServerTranscriptionEngine: TranscriptionEngine {
     public var baseURL: URL
     public var language: String?
     public var timeoutSeconds: TimeInterval
+    public var prompt: String?
 
-    public init(baseURL: URL, language: String?, timeoutSeconds: TimeInterval = 60) {
+    public init(baseURL: URL, language: String?, timeoutSeconds: TimeInterval = 60, prompt: String? = nil) {
         self.baseURL = baseURL
         self.language = language
         self.timeoutSeconds = timeoutSeconds
+        self.prompt = prompt
     }
 
     public func transcribe(audioFile: URL) async throws -> String {
@@ -22,7 +24,7 @@ public struct WhisperServerTranscriptionEngine: TranscriptionEngine {
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutSeconds
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Self.multipartBody(boundary: boundary, audio: audio, language: language)
+        request.httpBody = Self.multipartBody(boundary: boundary, audio: audio, language: language, prompt: prompt)
 
         let (data, response): (Data, URLResponse)
         do {
@@ -46,7 +48,7 @@ public struct WhisperServerTranscriptionEngine: TranscriptionEngine {
         return trimmed
     }
 
-    public static func multipartBody(boundary: String, audio: Data, language: String?) -> Data {
+    public static func multipartBody(boundary: String, audio: Data, language: String?, prompt: String? = nil) -> Data {
         var body = Data()
         func field(_ name: String, _ value: String) {
             body.appendString("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
@@ -60,6 +62,9 @@ public struct WhisperServerTranscriptionEngine: TranscriptionEngine {
         if let language = language?.trimmingCharacters(in: .whitespacesAndNewlines),
            !language.isEmpty, language.lowercased() != "auto" {
             field("language", language)
+        }
+        if let prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
+            field("prompt", prompt)
         }
         body.appendString("--\(boundary)--\r\n")
         return body

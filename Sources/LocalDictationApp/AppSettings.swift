@@ -10,6 +10,8 @@ enum AppSettingsKeys {
     static let cleanUpTranscript = "cleanUpTranscript"
     static let polishWithAI = "polishWithAI"
     static let polishModelPath = "polishModelPath"
+    static let customVocabulary = "customVocabulary"
+    static let useHistoryContext = "useHistoryContext"
 }
 
 struct AppSettingsSnapshot: Equatable {
@@ -22,6 +24,8 @@ struct AppSettingsSnapshot: Equatable {
     var cleanUpTranscript: Bool
     var polishWithAI: Bool
     var polishModelPath: String
+    var customVocabulary: String
+    var useHistoryContext: Bool
 
     var normalizedLanguage: String? {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,7 +44,9 @@ struct AppSettingsSnapshot: Equatable {
             inputDeviceUID: defaults.string(forKey: AppSettingsKeys.inputDeviceUID) ?? Defaults.inputDeviceUID,
             cleanUpTranscript: defaults.object(forKey: AppSettingsKeys.cleanUpTranscript) as? Bool ?? Defaults.cleanUpTranscript,
             polishWithAI: defaults.object(forKey: AppSettingsKeys.polishWithAI) as? Bool ?? Defaults.polishWithAI,
-            polishModelPath: defaults.string(forKey: AppSettingsKeys.polishModelPath) ?? Defaults.polishModelPath
+            polishModelPath: defaults.string(forKey: AppSettingsKeys.polishModelPath) ?? Defaults.polishModelPath,
+            customVocabulary: defaults.string(forKey: AppSettingsKeys.customVocabulary) ?? Defaults.customVocabulary,
+            useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext
         )
     }
 
@@ -54,7 +60,9 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.inputDeviceUID: Defaults.inputDeviceUID,
             AppSettingsKeys.cleanUpTranscript: Defaults.cleanUpTranscript,
             AppSettingsKeys.polishWithAI: Defaults.polishWithAI,
-            AppSettingsKeys.polishModelPath: Defaults.polishModelPath
+            AppSettingsKeys.polishModelPath: Defaults.polishModelPath,
+            AppSettingsKeys.customVocabulary: Defaults.customVocabulary,
+            AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext
         ])
     }
 
@@ -68,5 +76,7 @@ struct AppSettingsSnapshot: Equatable {
         static let cleanUpTranscript = true
         static let polishWithAI = false  // opt-in: needs the ~1.8GB model + resident llama-server
         static let polishModelPath = "~/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+        static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
+        static let useHistoryContext = true  // feed recent transcripts as context bias
     }
 }

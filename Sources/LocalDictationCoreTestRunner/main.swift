@@ -15,6 +15,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("TranscriptionError surfaces friendly localizedDescription", testTranscriptionErrorLocalizedDescription)
         await suite.run("Cleaner removes fillers + fixes caps/spacing", testTranscriptCleanerBasics)
         await suite.run("Cleaner preserves meaning + safe tokens", testTranscriptCleanerSafety)
+        await suite.run("Dictation context + prompt biasing args", testDictationContext)
         await suite.run("Polish guardrail accepts faithful, rejects divergent", testPolishGuardrail)
         await suite.run("Polish request body + response parsing", testPolishRequestAndParsing)
         await suite.run("Whisper args omit language for auto/empty/nil", testWhisperArgsOmitLanguage)
@@ -261,6 +262,35 @@ private func testPolishGuardrail() throws {
         ),
         "should reject a summary that drops most words"
     )
+}
+
+private func testDictationContext() throws {
+    // appendingHistory caps to maxEntries and skips blanks.
+    var h: [String] = []
+    for i in 0..<15 { h = RecognitionContext.appendingHistory("line \(i)", to: h, maxEntries: 12) }
+    try expect(h.count == 12, "history should cap at 12, got \(h.count)")
+    try expect(h.first == "line 3", "should drop oldest, got \(h.first ?? "nil")")
+    h = RecognitionContext.appendingHistory("   ", to: h)
+    try expect(h.count == 12, "blank should not be added")
+
+    // prompt: vocabulary + recent history, capped.
+    let p = RecognitionContext.prompt(vocabulary: "Nxabyte VAD Whisper", history: ["hello world"], maxChars: 100)
+    try expect(p.contains("Nxabyte"), "prompt should include vocabulary")
+    try expect(p.contains("hello world"), "prompt should include recent history")
+    let capped = RecognitionContext.prompt(
+        vocabulary: "", history: Array(repeating: "word word word word", count: 50), maxChars: 80
+    )
+    try expect(capped.count <= 80, "prompt should respect maxChars, got \(capped.count)")
+
+    // CLI args carry --prompt when set.
+    let cfg = WhisperCLIConfiguration(executablePath: "/x", modelPath: "/m", language: nil, prompt: "bias terms")
+    let args = WhisperCLICommand.arguments(
+        configuration: cfg, audioFile: URL(fileURLWithPath: "/a.wav"), outputBase: URL(fileURLWithPath: "/o")
+    )
+    guard let i = args.firstIndex(of: "--prompt") else {
+        throw AssertionFailure(description: "args missing --prompt")
+    }
+    try expect(args[i + 1] == "bias terms", "prompt value should follow --prompt")
 }
 
 private func testTranscriptCleanerBasics() throws {

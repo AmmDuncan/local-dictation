@@ -21,6 +21,9 @@ final class AppModel {
     private var recorder: AudioFileRecorder?
     private var previewTask: Task<Void, Never>?
     private var isFinishing = false
+    /// Rolling recent transcripts, persisted, used to bias whisper toward the
+    /// user's own words (fewer mishearings). See RecognitionContext.
+    private var history: [String] = UserDefaults.standard.stringArray(forKey: "dictationHistory") ?? []
 
     init() {
         KeyboardShortcuts.onKeyDown(for: .holdToDictate) { [weak self] in
@@ -95,9 +98,9 @@ final class AppModel {
             return
         }
 
-        WhisperLocator.ensureBackendsLinked()
-        warmUpServer(settings: settings)  // (re)starts if the model changed
-        warmUpPolishServer(settings: settings)
+        // Start capturing audio FIRST so the first word isn't clipped. Server
+        // warmup / backend linking only matter for the final pass (seconds
+        // later), so they must not delay the mic. makeWorkflow is cheap (no I/O).
         let workflow = makeWorkflow(settings: settings)
         self.workflow = workflow
 
@@ -110,12 +113,18 @@ final class AppModel {
                 }
             }
             try await workflow.beginRecording()
-            if settings.showOverlay, let recorder {
-                startPreviewLoop(recorder: recorder, settings: settings)
-            }
         } catch {
             isRecording = false
             fail(error.localizedDescription)
+            return
+        }
+
+        // Capture is live — now do the slower setup the final pass needs.
+        WhisperLocator.ensureBackendsLinked()
+        warmUpServer(settings: settings)  // (re)starts if the model changed
+        warmUpPolishServer(settings: settings)
+        if settings.showOverlay, let recorder {
+            startPreviewLoop(recorder: recorder, settings: settings)
         }
     }
 
@@ -146,6 +155,7 @@ final class AppModel {
             lastTranscript = transcript
             status = transcript.isEmpty ? "Idle" : "Inserted"
             errorMessage = nil
+            if !transcript.isEmpty { recordHistory(transcript) }
 
             if settings.showOverlay {
                 if transcript.isEmpty {
@@ -168,12 +178,14 @@ final class AppModel {
         // The final pass prefers the resident server, waiting out a cold model
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
+        let prompt = contextPrompt(settings: settings)
         let transcriber = ResolvingTranscriptionEngine(
             serverManager: serverManager,
-            configuration: makeConfiguration(settings: settings, timeoutSeconds: 60),
+            configuration: makeConfiguration(settings: settings, timeoutSeconds: 60, prompt: prompt),
             language: settings.normalizedLanguage,
             timeoutSeconds: 60,
-            serverWait: 30
+            serverWait: 30,
+            prompt: prompt
         )
 
         let inserter: TextInserting = settings.pasteOnRelease ? ClipboardInserter() : PreviewOnlyInserter()
@@ -194,14 +206,30 @@ final class AppModel {
         )
     }
 
-    private func makeConfiguration(settings: AppSettingsSnapshot, timeoutSeconds: TimeInterval = 60) -> WhisperCLIConfiguration {
+    private func makeConfiguration(settings: AppSettingsSnapshot, timeoutSeconds: TimeInterval = 60, prompt: String? = nil) -> WhisperCLIConfiguration {
         .init(
             executablePath: WhisperLocator.resolved(configured: settings.whisperExecutablePath),
             modelPath: settings.modelPath.expandingTildeInPath,
             language: settings.normalizedLanguage,
             timeoutSeconds: timeoutSeconds,
-            vadModelPath: WhisperLocator.resolvedVadModel()
+            vadModelPath: WhisperLocator.resolvedVadModel(),
+            prompt: prompt
         )
+    }
+
+    /// Whisper context prompt from the user's vocabulary + recent history, to
+    /// bias recognition toward their own words (fewer mishearings). Nil = none.
+    private func contextPrompt(settings: AppSettingsSnapshot) -> String? {
+        let prompt = RecognitionContext.prompt(
+            vocabulary: settings.customVocabulary,
+            history: settings.useHistoryContext ? history : []
+        )
+        return prompt.isEmpty ? nil : prompt
+    }
+
+    private func recordHistory(_ transcript: String) {
+        history = RecognitionContext.appendingHistory(transcript, to: history)
+        UserDefaults.standard.set(history, forKey: "dictationHistory")
     }
 
     /// Periodically transcribes the audio captured so far and shows it in the
@@ -210,9 +238,12 @@ final class AppModel {
     /// revise itself as more speech arrives.
     private func startPreviewLoop(recorder: AudioFileRecorder, settings: AppSettingsSnapshot) {
         let language = settings.normalizedLanguage
+        let prompt = contextPrompt(settings: settings)
+        let cleanupOptions: TranscriptCleaner.Options? = settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil
 
         previewTask?.cancel()
         previewTask = Task { [weak self] in
+            var lastShown = ""
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 if Task.isCancelled {
@@ -235,14 +266,20 @@ final class AppModel {
                 defer { try? FileManager.default.removeItem(at: url) }
 
                 let engine = WhisperServerTranscriptionEngine(
-                    baseURL: baseURL, language: language, timeoutSeconds: 8
+                    baseURL: baseURL, language: language, timeoutSeconds: 8, prompt: prompt
                 )
                 let raw = try? await engine.transcribe(audioFile: url)
-                let text = WhisperTranscriptParser.strippedForInsertion(raw ?? "")
+                var text = WhisperTranscriptParser.strippedForInsertion(raw ?? "")
+                if let cleanupOptions {
+                    text = TranscriptCleaner.clean(text, options: cleanupOptions)
+                }
 
-                guard !Task.isCancelled, !text.isEmpty else {
+                // Skip empties and unchanged text so the preview reads steadily
+                // instead of flickering as whisper re-transcribes the window.
+                guard !Task.isCancelled, !text.isEmpty, text != lastShown else {
                     continue
                 }
+                lastShown = text
 
                 await MainActor.run {
                     guard let self, self.isRecording else {
@@ -314,12 +351,13 @@ private struct ResolvingTranscriptionEngine: TranscriptionEngine {
     let language: String?
     let timeoutSeconds: TimeInterval
     let serverWait: TimeInterval
+    let prompt: String?
 
     func transcribe(audioFile: URL) async throws -> String {
         if let baseURL = await serverManager.awaitReady(timeout: serverWait) {
             do {
                 return try await WhisperServerTranscriptionEngine(
-                    baseURL: baseURL, language: language, timeoutSeconds: timeoutSeconds
+                    baseURL: baseURL, language: language, timeoutSeconds: timeoutSeconds, prompt: prompt
                 ).transcribe(audioFile: audioFile)
             } catch TranscriptionError.emptyTranscript {
                 // A real "no speech" result — don't waste a cold CLI pass on it.

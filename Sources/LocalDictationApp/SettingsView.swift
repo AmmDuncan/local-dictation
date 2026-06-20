@@ -13,6 +13,8 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.inputDeviceUID) private var inputDeviceUID = AppSettingsSnapshot.Defaults.inputDeviceUID
     @AppStorage(AppSettingsKeys.cleanUpTranscript) private var cleanUpTranscript = AppSettingsSnapshot.Defaults.cleanUpTranscript
     @AppStorage(AppSettingsKeys.polishWithAI) private var polishWithAI = AppSettingsSnapshot.Defaults.polishWithAI
+    @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
+    @AppStorage(AppSettingsKeys.useHistoryContext) private var useHistoryContext = AppSettingsSnapshot.Defaults.useHistoryContext
 
     @State private var readiness = ReadinessModel()
     @State private var store = ModelStore()
@@ -43,9 +45,14 @@ struct SettingsView: View {
                 .tabItem { Label("Audio", systemImage: "mic") }
                 .tag(SettingsTab.audio)
 
-            AdvancedTab(whisperExecutablePath: $whisperExecutablePath, modelPath: $modelPath)
-                .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
-                .tag(SettingsTab.advanced)
+            AdvancedTab(
+                whisperExecutablePath: $whisperExecutablePath,
+                modelPath: $modelPath,
+                customVocabulary: $customVocabulary,
+                useHistoryContext: $useHistoryContext
+            )
+            .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
+            .tag(SettingsTab.advanced)
         }
         .frame(width: 540, height: 540)
         .onAppear(perform: refresh)

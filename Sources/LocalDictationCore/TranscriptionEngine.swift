@@ -14,6 +14,9 @@ public struct WhisperCLIConfiguration: Equatable, Sendable {
     /// Silero VAD model path. When set, only speech segments are transcribed —
     /// silence/whistle/noise produce nothing instead of hallucinated words.
     public var vadModelPath: String?
+    /// Context prompt biasing the decoder toward the user's vocabulary/history,
+    /// so recurring terms are mis-heard less (whisper's `--prompt`).
+    public var prompt: String?
 
     public init(
         executablePath: String,
@@ -21,7 +24,8 @@ public struct WhisperCLIConfiguration: Equatable, Sendable {
         language: String?,
         timeoutSeconds: TimeInterval = 60,
         beamSize: Int = 1,
-        vadModelPath: String? = nil
+        vadModelPath: String? = nil,
+        prompt: String? = nil
     ) {
         self.executablePath = executablePath
         self.modelPath = modelPath
@@ -29,6 +33,7 @@ public struct WhisperCLIConfiguration: Equatable, Sendable {
         self.timeoutSeconds = timeoutSeconds
         self.beamSize = beamSize
         self.vadModelPath = vadModelPath
+        self.prompt = prompt
     }
 }
 
@@ -322,6 +327,11 @@ public enum WhisperCLICommand {
 
         if let vad = configuration.vadModelPath, !vad.isEmpty {
             arguments.append(contentsOf: ["--vad", "-vm", vad])
+        }
+
+        if let prompt = configuration.prompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !prompt.isEmpty {
+            arguments.append(contentsOf: ["--prompt", prompt])
         }
 
         return arguments
