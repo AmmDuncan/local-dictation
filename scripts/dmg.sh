@@ -18,6 +18,24 @@ STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/LocalDictation.app"
 ln -s /Applications "$STAGE/Applications"   # drag target
 
+# Double-click installer: copies the app to /Applications and strips the
+# quarantine flag, so a friend never sees the "damaged" block (which has no
+# "Open Anyway"). They right-click → Open this once (scripts get the gentler
+# unidentified-developer prompt, unlike unnotarized .app bundles).
+cat > "$STAGE/Install Local Dictation.command" <<'CMD'
+#!/bin/bash
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DEST="/Applications/LocalDictation.app"
+echo "Installing Local Dictation…"
+rm -rf "$DEST"
+cp -R "$HERE/LocalDictation.app" "$DEST"
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+echo "Done — launching. You can close this window."
+open "$DEST"
+CMD
+chmod +x "$STAGE/Install Local Dictation.command"
+
 rm -f "$DMG"
 hdiutil create -volname "Local Dictation" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"

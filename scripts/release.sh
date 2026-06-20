@@ -55,13 +55,25 @@ SHORT_VERSION="$VERSION" bash "$PROJECT_DIR/scripts/dmg.sh"
 DMG="$DIST/LocalDictation-$VERSION.dmg"
 
 # Publish the release with the dmg (manual install) + zip + appcast (auto-update).
+NOTES="$(cat <<NOTE
+**Install (Apple Silicon, macOS 14+):**
+
+1. Download **LocalDictation-$VERSION.dmg** and open it.
+2. **Right-click** *"Install Local Dictation.command"* → **Open** → **Open**. It installs the app and launches it.
+
+A plain double-click is blocked as "damaged" because this app isn't notarized by Apple — the installer clears that for you. (By hand: drag the app to Applications, then run \`xattr -dr com.apple.quarantine /Applications/LocalDictation.app\`.)
+
+Then grant **Microphone** + **Accessibility**, download a model in **Settings → Models**, and hold **⌃Space** to dictate. Full guide: INSTALL.md.
+NOTE
+)"
 gh release create "$TAG" \
     "$DMG" \
     "$DIST/LocalDictation.zip" \
+    "$PROJECT_DIR/INSTALL.md" \
     "$STAGE/appcast.xml" \
     --repo "$REPO" \
     --title "Local Dictation $VERSION" \
-    --notes "Local Dictation $VERSION"
+    --notes "$NOTES"
 
 echo "Released $TAG → https://github.com/$REPO/releases/tag/$TAG"
 echo "Feed: https://github.com/$REPO/releases/latest/download/appcast.xml"

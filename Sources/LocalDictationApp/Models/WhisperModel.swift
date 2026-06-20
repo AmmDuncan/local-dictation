@@ -2,7 +2,7 @@ import Foundation
 
 /// A downloadable whisper.cpp ggml model. `sizeBytes` is the published f16 size,
 /// used both for the UI and to sanity‑check a file on disk is fully downloaded.
-struct WhisperModel: Identifiable, Hashable {
+struct WhisperModel: Identifiable, Hashable, DownloadableModel {
     let id: String
     let displayName: String
     let filename: String

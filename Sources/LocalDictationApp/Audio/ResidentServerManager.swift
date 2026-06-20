@@ -3,28 +3,71 @@ import Foundation
 import LocalDictationCore
 import Observation
 
-/// Owns a long-lived `whisper-server` subprocess so the model stays resident
-/// (no per-dictation reload). Starts lazily, restarts when the model changes,
-/// and reports readiness so callers can fall back to the CLI until it's warm.
+/// Owns a long-lived llama.cpp-family subprocess (whisper-server or llama-server)
+/// so the model stays resident — no per-call reload. Starts lazily, restarts when
+/// the model changes, and reports readiness so callers can wait out a cold load
+/// (or fall back). The only per-server differences — launch args and the health
+/// check — live in `Config`; everything else (process lifecycle, free port,
+/// readiness polling) is shared.
 @MainActor
 @Observable
-final class WhisperServerManager {
+final class ResidentServerManager {
+    struct Config {
+        /// Builds the process arguments for a given model path + chosen port.
+        let arguments: (_ modelPath: String, _ port: Int) -> [String]
+        /// Path polled for readiness, e.g. "/" (whisper-server) or "/health".
+        let healthPath: String
+        /// When true, readiness requires HTTP 200 (llama-server); when false, any
+        /// response counts (whisper-server answers "/" once the model is loaded).
+        let requireHTTPOK: Bool
+
+        /// whisper-server: greedy, no-timestamps, optional bundled VAD; "/" ready.
+        static var whisper: Config {
+            Config(
+                arguments: { model, port in
+                    var args = ["-m", model, "--host", "127.0.0.1", "--port", String(port), "-nt", "-bs", "1"]
+                    if let vad = WhisperLocator.resolvedVadModel() {
+                        args.append(contentsOf: ["--vad", "-vm", vad])
+                    }
+                    return args
+                },
+                healthPath: "/",
+                requireHTTPOK: false
+            )
+        }
+
+        /// llama-server: 2k context, full GPU offload, no web UI; "/health" 200.
+        static var llama: Config {
+            Config(
+                arguments: { model, port in
+                    ["-m", model, "--host", "127.0.0.1", "--port", String(port), "-c", "2048", "-ngl", "99", "--no-webui"]
+                },
+                healthPath: "/health",
+                requireHTTPOK: true
+            )
+        }
+    }
+
     private(set) var isReady = false
 
+    private let config: Config
     private var process: Process?
-    private var port: Int = 0
+    private var port = 0
     private var modelPath: String?
     private var readinessTask: Task<Void, Never>?
+
+    init(config: Config) {
+        self.config = config
+    }
 
     var baseURL: URL? {
         guard isReady, port > 0 else { return nil }
         return URL(string: "http://127.0.0.1:\(port)")
     }
 
-    /// Wait until the resident server is ready (model loaded) or the deadline
-    /// passes. Returns the ready base URL, or nil if no server is coming up —
-    /// lets the final pass wait out a cold model load instead of racing a cold
-    /// CLI against the still-loading server.
+    /// Wait until the server is ready (model loaded) or the deadline passes.
+    /// Returns the ready base URL, or nil if no server is coming up — lets a
+    /// caller wait out a cold model load instead of racing a cold fallback.
     func awaitReady(timeout: TimeInterval) async -> URL? {
         if let url = baseURL { return url }
         guard process?.isRunning == true else { return nil }
@@ -37,8 +80,8 @@ final class WhisperServerManager {
         return baseURL
     }
 
-    /// Ensure a server is running for `modelPath`. Cheap to call repeatedly;
-    /// only (re)starts when nothing is running or the model changed.
+    /// Ensure a server is running for `modelPath`. Cheap to call repeatedly; only
+    /// (re)starts when nothing is running or the model changed.
     func ensureRunning(modelPath newModel: String, executablePath: String) {
         if process?.isRunning == true, modelPath == newModel {
             return
@@ -60,13 +103,9 @@ final class WhisperServerManager {
         WhisperLocator.ensureBackendsLinked()
 
         let chosenPort = Self.freePort()
-        var args = ["-m", newModel, "--host", "127.0.0.1", "--port", String(chosenPort), "-nt", "-bs", "1"]
-        if let vad = WhisperLocator.resolvedVadModel() {
-            args.append(contentsOf: ["--vad", "-vm", vad])
-        }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executablePath)
-        proc.arguments = args
+        proc.arguments = config.arguments(newModel, chosenPort)
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
         do {
@@ -83,15 +122,17 @@ final class WhisperServerManager {
     }
 
     private func pollUntilReady(port: Int) async {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
+        guard let url = URL(string: "http://127.0.0.1:\(port)\(config.healthPath)") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
         // Up to ~90s — large models take a while to load into VRAM.
         for _ in 0..<360 {
             if Task.isCancelled { return }
-            if (try? await URLSession.shared.data(for: request)) != nil {
-                isReady = true
-                return
+            if let (_, response) = try? await URLSession.shared.data(for: request) {
+                if !config.requireHTTPOK || (response as? HTTPURLResponse)?.statusCode == 200 {
+                    isReady = true
+                    return
+                }
             }
             try? await Task.sleep(for: .milliseconds(250))
         }

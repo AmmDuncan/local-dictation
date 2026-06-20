@@ -7,25 +7,33 @@ Everything runs **locally** — your audio never leaves your computer.
 
 ## 1. Install
 
-1. Unzip `LocalDictation.zip`.
-2. Drag **LocalDictation.app** into your **Applications** folder.
+This app isn't from the App Store and isn't notarized by Apple, so a plain
+double-click gets blocked as *"damaged"* (there's no "Open Anyway" for that —
+it's just how macOS treats unnotarized downloads). Use **one** of these instead:
 
-## 2. Open it the first time
+### Easiest — the installer (from the .dmg)
 
-Because this is a personal app (not from the App Store), macOS will block the
-first launch with a warning. This is expected — here's how to allow it:
+1. Open **LocalDictation-x.y.z.dmg**.
+2. **Right-click** *"Install Local Dictation.command"* → **Open** → **Open** again
+   at the prompt. (Right-click-Open is what lets a downloaded script run the first
+   time.)
+3. It copies the app to Applications, clears the download flag, and launches it.
 
-1. Double-click the app. macOS says it "cannot be opened."
-2. Open **System Settings → Privacy & Security**.
-3. Scroll down — you'll see *"LocalDictation was blocked."* Click **Open Anyway**.
-4. Confirm with **Open**.
+### Or by hand (works from the .dmg or .zip)
 
-*(You only do this once.)*
+1. Drag **LocalDictation.app** into **Applications**.
+2. Open **Terminal** and run:
+   ```
+   xattr -dr com.apple.quarantine /Applications/LocalDictation.app
+   ```
+   (This just removes the "downloaded from the internet" flag — it doesn't change
+   the app.)
+3. Open the app normally.
 
 There's no window and no Dock icon — look for a small **microphone icon in your
 menu bar** (top-right of the screen).
 
-## 3. Grant two permissions
+## 2. Grant two permissions
 
 Click the menu-bar mic icon → **Settings**. The top of the **General** tab shows
 what's ready. You'll need:
@@ -34,22 +42,28 @@ what's ready. You'll need:
 - **Accessibility** — so it can type the text for you. Open **System Settings →
   Privacy & Security → Accessibility** and turn on **LocalDictation**.
 
-## 4. Download a speech model
+## 3. Download a speech model
 
-In **Settings → Models**, click **Download** on a model. **Large v3 Turbo**
-(recommended) is the most accurate; **Base** or **Tiny** are smaller and faster
-to download. Then click **Use** on the one you downloaded.
+In **Settings → Models**, under **Transcription**, click **Download** on a model.
+**Large v3 Turbo** (recommended) is the most accurate; **Base** or **Tiny** are
+smaller and faster. Then click **Use** on the one you downloaded.
 
-## 5. Dictate
+*(Optional: turn on **Polish with AI** in General and download a polish model
+under **Settings → Models → Polish** for nicer punctuation.)*
 
-Hold **Control + Space**, speak, and let go. Your words are typed wherever your
-cursor is. You can change the shortcut in **Settings → General**.
+## 4. Dictate
+
+Hold **Control + Space**, speak, and let go — your words are typed wherever your
+cursor is. Prefer tapping once to start and again to stop? Switch **Settings →
+General → Activation** to *Tap to start / stop*. **Esc** cancels a dictation.
 
 ---
 
 **Troubleshooting**
 
 - *Nothing happens when I hold the shortcut:* make sure a model is downloaded
-  (Settings → Models) and Accessibility is granted (step 3).
-- *Power-user install:* instead of step 2 you can run
-  `xattr -dr com.apple.quarantine /Applications/LocalDictation.app` in Terminal.
+  (Settings → Models) and Accessibility is granted (step 2). Note: **⌃Space** is
+  also macOS's "switch input source" if you have more than one — rebind in
+  Settings → General if it clashes.
+- *Still says "damaged":* you opened it before clearing quarantine — run the
+  `xattr` command above (or re-run the installer), then open it again.

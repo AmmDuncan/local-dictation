@@ -15,8 +15,8 @@ final class AppModel {
     let readiness = ReadinessModel()
 
     private let overlayController = OverlayController()
-    private let serverManager = WhisperServerManager()
-    private let llamaManager = LlamaServerManager()
+    private let serverManager = ResidentServerManager(config: .whisper)
+    private let llamaManager = ResidentServerManager(config: .llama)
     private var workflow: DictationWorkflow?
     private var recorder: AudioFileRecorder?
     private var previewTask: Task<Void, Never>?
@@ -502,7 +502,7 @@ private struct PreviewOnlyInserter: TextInserting {
 /// server isn't available it returns the text unchanged (LlamaPolishEngine also
 /// falls back on any failure), so polish never blocks or corrupts insertion.
 private struct ServerBackedPolisher: TextPolishing {
-    let serverManager: LlamaServerManager
+    let serverManager: ResidentServerManager
     let serverWait: TimeInterval
     var mode: DictationMode = .clean
     var context: String?
@@ -531,7 +531,7 @@ private struct CaretAwareInserter: TextInserting {
 /// fall back to the per-call CLI if the server can't come up. Keeps the final
 /// pass from racing a cold CLI against a still-loading server.
 private struct ResolvingTranscriptionEngine: TranscriptionEngine {
-    let serverManager: WhisperServerManager
+    let serverManager: ResidentServerManager
     let configuration: WhisperCLIConfiguration
     let language: String?
     let timeoutSeconds: TimeInterval
