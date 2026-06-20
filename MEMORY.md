@@ -55,3 +55,12 @@
   2. Bundle `llama-server` + its dylibs (+ openssl, ggml is shared w/ whisper) in build-app.sh so polish works for FRIENDS (currently homebrew-only → friends get no polish, graceful). Qwen download flow already exists.
   3. Dedup: `LlamaServerManager`≈`WhisperServerManager` + `PolishModelStore`≈`ModelStore` → shared resident-server + FileDownloader (flagged in code comments).
   4. Live re-test onset fix with headphones (USER to confirm first-word no longer clips on fast press-talk).
+
+## UPDATE (2026-06-20, later) — vocabulary + punctuation resolved
+- HEAD still `cb23b7e`, working tree CLEAN. Changes below are runtime UserDefaults + a reverted feature (no new commits).
+- Custom vocabulary CONFIRMED on real voice: "vibe coded" (a 2025 coinage whisper renders as "webcoded" — no ASR model knows it; whisper is 2023-era and there's no newer open one) is now caught with vocab set. This is THE on-device, no-LLM mishearing fix. User UserDefault: customVocabulary = "vibe coded, vibe coding, speech to text, dictation, transcription, Whisper, VAD".
+- Built then REVERTED a word-replacement-rules feature (`TextReplacements`) — user prefers vocabulary, no manual replace lists. Reverted to cb23b7e (gone).
+- PUNCTUATION finding: whisper DOES punctuate natively but from PROSODY (pauses/intonation) → unreliable on run-on/flat real speech. VERIFIED our pipeline does NOT strip it (VAD vs no-VAD output identical + both fully punctuated; TranscriptCleaner only normalizes spacing; prompt doesn't degrade clean audio). Reliable fix = LLM polish (punctuates from MEANING: adds ?, list commas, periods; preserves words via guardrail) — VERIFIED through the app's llama-server.
+- LLM polish RE-ENABLED on user machine for punctuation: polishWithAI = true (~2GB resident RAM + ~150ms/dictation; FINAL text only, preview stays whisper-native). Shipped code default is still OFF (opt-in); user has it ON via UserDefault. Toggle: Settings → General.
+- Pipeline now: whisper(+VAD + vocab/history --prompt) → strip → TranscriptCleaner (deterministic, on) → LLM polish (Qwen-3B, on, meaning-based punctuation, word-preserving).
+- OPEN (priority reordered): (1) bundle llama-server for friends — polish is now relied on, so distribution needs it (build-app.sh; ggml shared w/ whisper, +openssl); (2) opt-in LLM CORRECTOR mode for mishearings (looser guardrail, distinct from current word-preserving formatter); (3) dedup server managers + model stores.
