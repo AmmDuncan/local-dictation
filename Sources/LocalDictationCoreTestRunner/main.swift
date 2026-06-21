@@ -17,6 +17,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Cleaner preserves meaning + safe tokens", testTranscriptCleanerSafety)
         await suite.run("Dictation context + prompt biasing args", testDictationContext)
         await suite.run("Polish guardrail accepts faithful, rejects divergent", testPolishGuardrail)
+        await suite.run("Polish preservesContentWords: rejects fabrication, allows fillers/ellipsis", testPolishPreservesContentWords)
         await suite.run("Polish request body + response parsing", testPolishRequestAndParsing)
         await suite.run("Whisper args omit language for auto/empty/nil", testWhisperArgsOmitLanguage)
         await suite.run("Whisper args clamp bad beam size", testWhisperArgsClampBeam)
@@ -49,7 +50,6 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow prose: chat 'push to me' left alone", testWorkflowProseLeavesMeAlone)
         await suite.run("Workflow command mode survives prose cleanup (caps/period)", testWorkflowCommandModeWithCleanup)
         await suite.run("Polish prompt is formatting cleanup only", testPolishPromptCleansOnly)
-        await suite.run("Corrector guardrail allows word swaps, rejects expand/summary", testCorrectorGuardrail)
         await suite.run("Text replacements parse + whole-word apply", testTextReplacements)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
@@ -245,7 +245,7 @@ private func testPolishRequestAndParsing() throws {
     try expect(messages.last?["role"] == "user", "last message should be the user transcript")
     try expect(messages.last?["content"] == "um hello there", "last message should carry the transcript")
     try expect((json?["temperature"] as? Double) == 0, "temperature should be 0")
-    try expect(messages.count == 8, "system + 3 few-shot pairs + transcript = 8 messages")
+    try expect(messages.count == 10, "system + 4 few-shot pairs + transcript = 10 messages")
 
     // Response parsing pulls choices[0].message.content.
     let sample = Data(#"{"choices":[{"message":{"role":"assistant","content":"Hello there."}}]}"#.utf8)
@@ -285,6 +285,35 @@ private func testPolishGuardrail() throws {
         ),
         "should reject a summary that drops most words"
     )
+}
+
+private func testPolishPreservesContentWords() throws {
+    let ok = TranscriptPolisher.preservesContentWords
+
+    // ACCEPT — pure reformat: filler + stutter removal, caps/punct.
+    try expect(ok("The report is due Friday.", "um the the report is due friday"),
+               "filler+stutter removal should pass")
+    try expect(ok("So I was just testing the thing.", "so i i was just testing the thing you know"),
+               "stutter + 'you know' removal should pass")
+    // ACCEPT — clean text untouched.
+    try expect(ok("Hello, how are you today?", "Hello, how are you today?"), "unchanged should pass")
+    // ACCEPT — disfluency marked with an ellipsis, every word kept (… is punctuation).
+    try expect(ok("So I was gonna… the thing with the… and then maybe we could, but…",
+                  "so i was gonna the thing with the and then maybe we could but"),
+               "ellipsis-marked, word-preserving output should pass")
+
+    // REJECT — the actual fabrications observed from the live polish model.
+    try expect(!ok("So I was going to do the thing, and then maybe we could.",
+                   "so i was gonna the thing with the and then maybe we could but"),
+               "added words ('going','do') + reword must be rejected")
+    try expect(!ok("The I know every project, but we have not every.",
+                   "the I know every project but we have there are not every"),
+               "dropping real content ('there are') must be rejected")
+    // REJECT — reordering and substitution.
+    try expect(!ok("Sat the cat down.", "the cat sat down"), "reordering must be rejected")
+    try expect(!ok("The dog sat down.", "the cat sat down"), "substitution ('cat'→'dog') must be rejected")
+    // REJECT — empty polish on non-empty input.
+    try expect(!ok("", "the cat sat"), "empty polish of real input must be rejected")
 }
 
 private func testDictationContext() throws {
@@ -948,37 +977,7 @@ private func testPolishPromptCleansOnly() throws {
     let body = TranscriptPolisher.chatRequestBody(transcript: "hi")
     let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
     let msgs = json?["messages"] as? [[String: String]] ?? []
-    try expect(msgs.count == 8, "system + 3 few-shot pairs + transcript = 8, got \(msgs.count)")
-}
-
-private func testCorrectorGuardrail() throws {
-    // Corrector accepts a likely-mishearing fix that the strict guardrail rejects.
-    try expect(
-        TranscriptPolisher.isFaithfulCorrection(
-            polished: "I was vibe coding the whole thing", original: "i was webcoded the whole thing"
-        ),
-        "corrector should accept a same-length word substitution"
-    )
-    try expect(
-        !TranscriptPolisher.isFaithful(
-            polished: "I was vibe coding the whole thing", original: "i was webcoded the whole thing"
-        ),
-        "strict guardrail should reject that word change"
-    )
-    // Corrector still rejects an answer/expansion and a summary.
-    try expect(
-        !TranscriptPolisher.isFaithfulCorrection(
-            polished: "Sure, I can help you book a flight to Paris next week!", original: "book a flight"
-        ),
-        "corrector should reject an expansion/answer"
-    )
-    try expect(
-        !TranscriptPolisher.isFaithfulCorrection(
-            polished: "Done.",
-            original: "so the meeting we scheduled for tuesday has been moved to thursday afternoon"
-        ),
-        "corrector should reject a summary that drops most words"
-    )
+    try expect(msgs.count == 10, "system + 4 few-shot pairs + transcript = 10, got \(msgs.count)")
 }
 
 private func testTextReplacements() throws {
