@@ -1,6 +1,12 @@
 # Learn / Correction — Design Spec
 
-**Status:** Proposed (not started) · **Date:** 2026-06-21 · **Repo:** `~/work/tools/local-dictation`, branch `feat/learn-corrections` (off `main` @ `cc017be`, v0.3.3 shipped) · **Scope:** full build, all surfaces; live re-insertion experimental/default-OFF.
+**Status:** Implemented (P1–P5) on branch `feat/learn-corrections` (off `main` @ `cc017be`, v0.3.3 shipped) — 61 Core tests pass, `swift build` + `scripts/build-app.sh` green. The interactive UI (review-panel gestures) and the experimental AX live re-insertion need manual verification on a real mic + field. **Date:** 2026-06-21 · **Scope:** full build, all surfaces; live re-insertion experimental/default-OFF.
+
+> **v1 scope notes (deviations from the design below, decided during build):**
+> - `strip`/`cleanup` removals are **not** range-tracked — they aren't revertable swaps. Segment A = the `mishearing`/`command` substitution swaps (already in the pre-polish output space), so no multi-pass strip→cleanup→preCorrect fold is needed; `EditFold.combine` folds mishearing+command. Capitalization rework was dropped accordingly.
+> - Tracked correctors are **additive variants** (`applyTracked`) with the string `apply`/`clean` delegating — not signature changes to existing callers (less churn, behavior unchanged).
+> - `ReviewPanelController` (floating key panel) ships for Door #1; the Learn-tab (Door #2) opens the same `ReviewPanel` as a sheet. Span selection is **two-tap** (tap a word, tap another to extend) rather than drag.
+> - Insert-target **capture** lives with re-insertion in P5 (where it's used), not P4.
 
 ## Overview & Goals
 
