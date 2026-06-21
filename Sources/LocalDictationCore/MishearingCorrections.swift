@@ -60,27 +60,8 @@ public enum MishearingCorrections {
         in text: String
     ) -> (String, [Edit], [(at: Int, delta: Int)]) {
         guard let clotRegex else { return (text, [], []) }
-        let ns = text as NSString
-        let matches = clotRegex.matches(in: text, range: NSRange(location: 0, length: ns.length))
-        guard !matches.isEmpty else { return (text, [], []) }
-
-        let replacement = "Claude"
-        var newResult = ""
-        var edits: [Edit] = []
-        var deltas: [(at: Int, delta: Int)] = []
-        var lastEnd = 0
-        for match in matches {
-            let r = match.range
-            newResult += ns.substring(with: NSRange(location: lastEnd, length: r.location - lastEnd))
-            let fromText = ns.substring(with: r)
-            let outLocation = (newResult as NSString).length
-            newResult += replacement
-            let outLength = (replacement as NSString).length
-            edits.append(Edit(location: outLocation, length: outLength, from: fromText, to: replacement, source: .mishearing))
-            deltas.append((at: r.location, delta: outLength - r.length))
-            lastEnd = r.location + r.length
-        }
-        newResult += ns.substring(from: lastEnd)
-        return (newResult, edits, deltas)
+        let matches = clotRegex.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length))
+        let replacements = matches.map { (range: $0.range, to: "Claude") }
+        return EditTracking.rebuild(text, replacements: replacements, source: .mishearing)
     }
 }

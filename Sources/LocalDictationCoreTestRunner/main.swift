@@ -55,6 +55,8 @@ struct LocalDictationCoreTestRunner {
         await suite.run("TextReplacements tracked: output-space edits + rebasing", testTextReplacementsEditTracking)
         await suite.run("Mishearing tracked: rules + clot edits, blood-clot spared", testMishearingEditTracking)
         await suite.run("Command mode tracked: me->main + formatting edits, gated", testCommandModeEditTracking)
+        await suite.run("EditFold.combine folds chained passes into final space", testEditFoldCombine)
+        await suite.run("RuleDerivation: revert identity + teach rule", testRuleDerivation)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
@@ -694,7 +696,7 @@ private func testWorkflowPreCorrectRunsBeforePolish() async throws {
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "ship it with clot today"),
         inserter: inserter,
-        preCorrect: { MishearingCorrections.apply(to: $0) },
+        preCorrect: { MishearingCorrections.applyTracked(to: $0) },
         polisher: polisher
     )
 
@@ -898,6 +900,21 @@ private func testContextPrompt() throws {
     try expect(capped.count <= 120, "context prompt respects maxChars, got \(capped.count)")
 }
 
+/// Mirrors `AppModel.makeWorkflow`'s preCorrect: global-safe mishearing fixes, then
+/// the context-gated command mode, with the two passes' edits folded into one
+/// Segment-A list.
+private func composedPreCorrect(
+    _ appClass: ContextBias.AppClass, _ preceding: String?
+) -> (@Sendable (String) -> (String, [Edit])) {
+    { text in
+        let (afterMishearing, mishearingEdits) = MishearingCorrections.applyTracked(to: text)
+        let (afterCommand, commandEdits) = CommandModeCorrections.applyTracked(
+            to: afterMishearing, appClass: appClass, precedingText: preceding
+        )
+        return (afterCommand, EditFold.combine([mishearingEdits, commandEdits]))
+    }
+}
+
 private func testWorkflowCommandModeInsertsMain() async throws {
     // Mirrors AppModel's preCorrect composition: global-safe fixes, then the
     // context-gated command mode. In a terminal after `git push origin`, the
@@ -907,15 +924,18 @@ private func testWorkflowCommandModeInsertsMain() async throws {
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "me"),
         inserter: inserter,
-        preCorrect: { text in
-            CommandModeCorrections.apply(
-                to: MishearingCorrections.apply(to: text), appClass: .terminal, precedingText: "git push origin "
-            )
-        }
+        preCorrect: composedPreCorrect(.terminal, "git push origin ")
     )
     try await workflow.beginRecording()
     try await workflow.finishRecording()
     try expect(inserter.insertedText == "main", "terminal git push: me -> main, got \(inserter.insertedText ?? "nil")")
+    // The whole P1 chain: the swap surfaces as a Segment-A edit on the workflow.
+    let edits = workflow.lastTranscriptAndEdits
+    try expect(
+        edits?.segmentA.contains { $0.to == "main" && $0.from.lowercased() == "me" && $0.source == .command } == true,
+        "segmentA carries the me->main command edit"
+    )
+    try expect(edits?.final == "main", "final text recorded")
 }
 
 private func testWorkflowProseLeavesMeAlone() async throws {
@@ -926,11 +946,7 @@ private func testWorkflowProseLeavesMeAlone() async throws {
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "push to me"),
         inserter: inserter,
-        preCorrect: { text in
-            CommandModeCorrections.apply(
-                to: MishearingCorrections.apply(to: text), appClass: .chat, precedingText: "tell them to "
-            )
-        }
+        preCorrect: composedPreCorrect(.chat, "tell them to ")
     )
     try await workflow.beginRecording()
     try await workflow.finishRecording()
@@ -947,11 +963,7 @@ private func testWorkflowCommandModeWithCleanup() async throws {
         transcriber: StubTranscriber(transcript: "git push origin me"),
         inserter: inserter,
         cleanupOptions: TranscriptCleaner.Options(),
-        preCorrect: { text in
-            CommandModeCorrections.apply(
-                to: MishearingCorrections.apply(to: text), appClass: .terminal, precedingText: nil
-            )
-        }
+        preCorrect: composedPreCorrect(.terminal, nil)
     )
     try await workflow.beginRecording()
     try await workflow.finishRecording()
@@ -1094,6 +1106,49 @@ private func testCommandModeEditTracking() throws {
     // Gated: terminal app but no git command in the line → untouched, no edits.
     let (o3, e3) = CommandModeCorrections.applyTracked(to: "remind me", appClass: terminal, precedingText: "please")
     try expect(o3 == "remind me" && e3.isEmpty, "no git command -> untouched, no edits")
+}
+
+private func testEditFoldCombine() throws {
+    // Pass 1 runs on "c a": a -> bb  (=> "c bb", the edit is AFTER c).
+    let (s1, p1) = TextReplacements.applyTracked(TextReplacements.parse("a => bb"), to: "c a", source: .mishearing)
+    try expect(s1 == "c bb", "pass1 output: \(s1)")
+    // Pass 2 runs on "c bb": c -> dddd  (=> "dddd bb", shifts the pass-1 edit forward).
+    let (s2, p2) = TextReplacements.applyTracked(TextReplacements.parse("c => dddd"), to: s1, source: .command)
+    try expect(s2 == "dddd bb", "pass2 output: \(s2)")
+
+    let folded = EditFold.combine([p1, p2]).sorted { $0.location < $1.location }
+    try expect(folded.count == 2, "two folded edits, got \(folded.count)")
+    // Both ranges must be valid in the FINAL string after the fold rebases pass 1.
+    try expect((s2 as NSString).substring(with: folded[0].range) == "dddd", "c->dddd valid in final")
+    try expect((s2 as NSString).substring(with: folded[1].range) == "bb", "a->bb rebased valid in final, got loc \(folded[1].range.location)")
+    try expect(folded[1].range.location == 5, "a->bb shifted +3 by earlier c->dddd, got \(folded[1].range.location)")
+
+    // Empty / single pass are identities.
+    try expect(EditFold.combine([]).isEmpty, "empty chain -> no edits")
+    try expect(EditFold.combine([p1]).count == 1, "single pass passes through")
+}
+
+private func testRuleDerivation() throws {
+    // Built-in swap edit -> a suppression identity, symmetric on heard casing.
+    let clot = Edit(location: 4, length: 6, from: "Clot", to: "Claude", source: .mishearing)
+    try expect(
+        RuleDerivation.suppressionIdentity(for: clot) == "mishearing:clot→Claude",
+        "mishearing identity lowercases heard text"
+    )
+    let me = Edit(location: 0, length: 4, from: "me", to: "main", source: .command)
+    try expect(RuleDerivation.suppressionIdentity(for: me) == "command:me→main", "command identity")
+
+    // User replacement + zero-length edits have no suppression identity.
+    let user = Edit(location: 0, length: 3, from: "teh", to: "the", source: .replacement)
+    try expect(RuleDerivation.suppressionIdentity(for: user) == nil, "user replacement isn't suppressible")
+    let strip = Edit(location: 0, length: 0, from: ".", to: "", source: .command)
+    try expect(RuleDerivation.suppressionIdentity(for: strip) == nil, "empty-to edit has no identity")
+
+    // Teach turns a heard span + correction into a rule; blank/no-op -> nil.
+    let rule = RuleDerivation.teach(heard: "vad", correction: "VAD")
+    try expect(rule?.pattern == "vad" && rule?.replacement == "VAD", "teach builds heard->correction rule")
+    try expect(RuleDerivation.teach(heard: "vad", correction: "  ") == nil, "blank correction -> nil")
+    try expect(RuleDerivation.teach(heard: "the", correction: "the") == nil, "no-op correction -> nil")
 }
 
 private func testInsertionFormatter() throws {

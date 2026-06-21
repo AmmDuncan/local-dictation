@@ -55,4 +55,18 @@ public extension Edit {
             return Edit(location: edit.location + shift, length: edit.length, from: edit.from, to: edit.to, source: edit.source)
         }
     }
+
+    /// Derive a pass's input-space length deltas — `(location-in-input, length-delta)`
+    /// — from its own OUTPUT-space edits. Lets a later pass rebase earlier edits via
+    /// `shifting(_:by:)` without each pass having to return deltas separately.
+    static func inputDeltas(_ edits: [Edit]) -> [(at: Int, delta: Int)] {
+        var cumulative = 0
+        var result: [(at: Int, delta: Int)] = []
+        for edit in edits.sorted(by: { $0.location < $1.location }) {
+            let delta = edit.length - (edit.from as NSString).length
+            result.append((at: edit.location - cumulative, delta: delta))
+            cumulative += delta
+        }
+        return result
+    }
 }

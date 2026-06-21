@@ -420,15 +420,25 @@ final class AppModel {
         let appClass = ContextBias.classify(appName: context?.activeApplicationName)
         let precedingText = context?.precedingText
         let commandMode = context != nil && appClass.allowsCommandMode
-        let preCorrect: (@Sendable (String) -> String)? = (wantsCorrection || commandMode)
+        let preCorrect: (@Sendable (String) -> (String, [Edit]))? = (wantsCorrection || commandMode)
             ? { @Sendable text in
-                var corrected = wantsCorrection ? MishearingCorrections.apply(to: text) : text
-                if commandMode {
-                    corrected = CommandModeCorrections.apply(
-                        to: corrected, appClass: appClass, precedingText: precedingText
-                    )
+                var result = text
+                var passes: [[Edit]] = []
+                if wantsCorrection {
+                    let (corrected, edits) = MishearingCorrections.applyTracked(to: result)
+                    result = corrected
+                    passes.append(edits)
                 }
-                return corrected
+                if commandMode {
+                    let (corrected, edits) = CommandModeCorrections.applyTracked(
+                        to: result, appClass: appClass, precedingText: precedingText
+                    )
+                    result = corrected
+                    passes.append(edits)
+                }
+                // Fold mishearing + command edits into one list in the final
+                // pre-polish (Segment A) coordinate space.
+                return (result, EditFold.combine(passes))
             }
             : nil
 
@@ -451,11 +461,11 @@ final class AppModel {
         return settings.smartSpacing ? CaretAwareInserter(wrapped: base) : base
     }
 
-    private func textReplacementsTransform(settings: AppSettingsSnapshot) -> (@Sendable (String) -> String)? {
+    private func textReplacementsTransform(settings: AppSettingsSnapshot) -> (@Sendable (String) -> (String, [Edit]))? {
         guard settings.useTextReplacements else { return nil }
         let rules = TextReplacements.parse(settings.textReplacements)
         guard !rules.isEmpty else { return nil }
-        return { TextReplacements.apply(rules, to: $0) }
+        return { TextReplacements.applyTracked(rules, to: $0, source: .replacement) }
     }
 
     private func makeConfiguration(settings: AppSettingsSnapshot, timeoutSeconds: TimeInterval = 60, prompt: String? = nil) -> WhisperCLIConfiguration {

@@ -37,9 +37,20 @@ public final class DictationWorkflow: @unchecked Sendable {
     /// degenerate audio.
     private static let minimumAudioBytes = 1024
 
+    /// The raw transcript, the deterministic pre-polish result (the coordinate space
+    /// Segment A edits highlight against), the inserted text, and the attributed
+    /// swaps split by the opaque polish boundary: Segment A = pre-polish corrections
+    /// (mishearing/command), Segment B = post-polish replacements. Drives the Learn
+    /// queue + the review panel. (`strip`/`cleanup` removals aren't tracked in v1 —
+    /// they aren't revertable swaps; see the spec's scope note.)
+    public typealias TranscriptEdits = (
+        raw: String, prePolish: String, final: String, segmentA: [Edit], segmentB: [Edit]
+    )
+
     private let lock = NSLock()
     private var _state: DictationWorkflowState = .idle
     private var _lastTranscript: String?
+    private var _lastTranscriptAndEdits: TranscriptEdits?
 
     public var state: DictationWorkflowState {
         lock.lock(); defer { lock.unlock() }
@@ -51,6 +62,12 @@ public final class DictationWorkflow: @unchecked Sendable {
         return _lastTranscript
     }
 
+    /// The most recent transcript with its attributed edits, or nil if none yet.
+    public var lastTranscriptAndEdits: TranscriptEdits? {
+        lock.lock(); defer { lock.unlock() }
+        return _lastTranscriptAndEdits
+    }
+
     private func setState(_ newValue: DictationWorkflowState) {
         lock.lock(); _state = newValue; lock.unlock()
     }
@@ -59,28 +76,34 @@ public final class DictationWorkflow: @unchecked Sendable {
         lock.lock(); _lastTranscript = newValue; lock.unlock()
     }
 
+    private func setLastTranscriptAndEdits(_ newValue: TranscriptEdits?) {
+        lock.lock(); _lastTranscriptAndEdits = newValue; lock.unlock()
+    }
+
     private let recorder: AudioRecording
     private let transcriber: TranscriptionEngine
     private let inserter: TextInserting
     private let cleanupOptions: TranscriptCleaner.Options?
     /// Deterministic transform applied BEFORE polish — built-in known-mishearing
     /// fixes (e.g. "clot" -> "Claude"). Runs first so the polish model sees the
-    /// correct term instead of swapping in an unrelated vocabulary word.
-    private let preCorrect: (@Sendable (String) -> String)?
+    /// correct term instead of swapping in an unrelated vocabulary word. Returns the
+    /// corrected text plus its attributed edits (Segment A).
+    private let preCorrect: (@Sendable (String) -> (String, [Edit]))?
     private let polisher: TextPolishing?
     /// Deterministic transform applied AFTER polish, just before insertion — e.g.
     /// user text replacements / snippet expansion. Runs after polish so an
-    /// expansion can't trip the polish word-divergence guardrail.
-    private let postProcess: (@Sendable (String) -> String)?
+    /// expansion can't trip the polish word-divergence guardrail. Returns the
+    /// processed text plus its attributed edits (Segment B).
+    private let postProcess: (@Sendable (String) -> (String, [Edit]))?
 
     public init(
         recorder: AudioRecording,
         transcriber: TranscriptionEngine,
         inserter: TextInserting,
         cleanupOptions: TranscriptCleaner.Options? = nil,
-        preCorrect: (@Sendable (String) -> String)? = nil,
+        preCorrect: (@Sendable (String) -> (String, [Edit]))? = nil,
         polisher: TextPolishing? = nil,
-        postProcess: (@Sendable (String) -> String)? = nil
+        postProcess: (@Sendable (String) -> (String, [Edit]))? = nil
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
@@ -157,9 +180,16 @@ public final class DictationWorkflow: @unchecked Sendable {
             }
             // Deterministic known-mishearing fixes BEFORE polish, so the model
             // sees the correct term and doesn't swap in an unrelated vocab word.
+            // The returned edits (Segment A) are in this pre-polish coordinate space.
+            var segmentA: [Edit] = []
             if let preCorrect {
-                insertText = preCorrect(insertText)
+                let (corrected, edits) = preCorrect(insertText)
+                insertText = corrected
+                segmentA = edits
             }
+            // The deterministic pre-polish result — the space Segment A edits point
+            // into, and what the review panel highlights against.
+            let prePolish = insertText
             // Optional LLM polish runs next and is self-guarding: it returns the
             // input unchanged on any failure, so it can never break insertion.
             if let polisher {
@@ -172,9 +202,13 @@ public final class DictationWorkflow: @unchecked Sendable {
             // invisible even though the fixed text was what actually got typed).
             let correctedTranscript = insertText
             // Deterministic post-process (text replacements / snippets), after
-            // polish so an expansion can't trip the polish guardrail.
+            // polish so an expansion can't trip the polish guardrail. Its edits
+            // (Segment B) are in the final inserted-text space.
+            var segmentB: [Edit] = []
             if let postProcess {
-                insertText = postProcess(insertText)
+                let (processed, edits) = postProcess(insertText)
+                insertText = processed
+                segmentB = edits
             }
             guard !insertText.isEmpty else {
                 setState(.failed("No speech was detected."))
@@ -182,6 +216,9 @@ public final class DictationWorkflow: @unchecked Sendable {
             }
 
             setLastTranscript(correctedTranscript)
+            setLastTranscriptAndEdits(
+                (raw: transcript, prePolish: prePolish, final: insertText, segmentA: segmentA, segmentB: segmentB)
+            )
             setState(.pasting(correctedTranscript))
             try await inserter.insert(insertText)
             setState(.idle)
