@@ -77,12 +77,18 @@ reviewed at leisure. Two regions:
 
 1. **Deferred review queue** — recent dictations, each with a **change count**.
    Tapping a row expands it into the review panel. Backed by `CorrectionLogStore`.
-2. **Rule management** — the accumulated user rules (the `TextReplacements` the
-   feature has appended), PLUS the **built-in** `MishearingCorrections` /
-   `CommandModeCorrections` rules shown and **toggle-able on/off**. Toggling a
-   built-in off writes it to the new **suppression set** (the rejection layer).
-   (Note: until P3 wires the apply-path consult, these toggles persist but have no
-   effect on the next dictation — see *Scope & phasing*.)
+2. **Rule management** — **structured rows only** (decided). Each accumulated user
+   rule (the `TextReplacements` the feature has appended) is its own row —
+   `from → to` with a `yours` tag, **edit** and **delete** affordances, and an
+   **+ Add correction** row — in the *same visual language* as the built-in rows
+   below it, so the whole tab reads as one list. (No raw `find => replace` textarea
+   in the Learn tab; that freeform editor stays in `AdvancedTab`. Teaching from the
+   review panel naturally yields a row, not a text line.) Below the user rules, the
+   **built-in** `MishearingCorrections` / `CommandModeCorrections` rules are shown
+   as **toggle rows** (on/off — they can't be text-edited). Toggling a built-in off
+   writes it to the new **suppression set** (the rejection layer). (Note: until P3
+   wires the apply-path consult, these toggles persist but have no effect on the
+   next dictation — see *Scope & phasing*.)
 
 #### Hotkey
 
@@ -607,7 +613,7 @@ question):
 | **NEW** `Sources/LocalDictationApp/CorrectionLogStore.swift` | enum mirroring `TranscriptHistoryStore`: `load`/`append`/`clear`, UDefaults key, JSON, max-200. |
 | **NEW** `Sources/LocalDictationApp/ReviewPanelController.swift` | own `NSPanel` **subclass** overriding `canBecomeKey`/`canBecomeMain` to return `true` (a borderless/titled panel is non-key by default — a style-mask flag can't do it). `styleMask: [.titled, .fullSizeContentView]` (or `[.borderless, .fullSizeContentView]`), and **NOT** `.nonactivatingPanel` (omitting it is what lets the panel activate — there is no `.activatingPanel` flag). `ignoresMouseEvents = false`, `isMovableByWindowBackground = false`. Programmatic key + responder management (`makeFirstResponder`) + restore prior-app focus on dismiss. Distinct window from the passive HUD (`OverlayController.swift:148` uses `.nonactivatingPanel`). |
 | **NEW** `Sources/LocalDictationApp/ReviewPanel.swift` | SwiftUI content: tappable/draggable word tokens, span selection, inline popover editor, "heard → should be" fallback field, "Also bias" toggle. |
-| **NEW** `Sources/LocalDictationApp/Settings/LearnTab.swift` | the deferred queue (`CorrectionLogStore.load()`, change count, expand → panel) + rule management (built-ins toggle → suppression set; user rules from `TextReplacements`); `clear` control. Follows `Sources/LocalDictationApp/Settings/AdvancedTab.swift` patterns. |
+| **NEW** `Sources/LocalDictationApp/Settings/LearnTab.swift` | the deferred queue (`CorrectionLogStore.load()`, change count, expand → panel) + rule management as **structured rows only**: user rules from `TextReplacements` as `from → to` rows with edit/delete + an "Add correction" row; built-ins as toggle rows → suppression set; `clear` control. **No raw-text editor here** (it stays in `AdvancedTab`). Follows `Sources/LocalDictationApp/Settings/AdvancedTab.swift` patterns. |
 | **NEW** `Sources/LocalDictationApp/SelectVerifyReplace.swift` | experimental live re-insertion: captured `(element, insertedText, range)` → select → read-back verify → atomic replace or abort. **Extract the compare/abort decision as a pure function** (input: captured range + read-back string + caret delta; output: `.match` / `.mismatch(reason)`) so it's unit-testable. Gated on `liveReinsertionEnabled`. |
 
 ## Testing strategy
@@ -694,12 +700,11 @@ graceful no-op in Terminal / an Electron app. The *decision logic* inside those
 - **Correction-log sensitivity** — stores `raw + corrected + final` text (no audio);
   expose clear + per-row delete; never export. Bound to 200 entries.
 
-**Open questions** (the previously-listed serialization and footgun-guard questions
-are now *resolved* above — JSON for the suppression set; capture in P4, guard is an
-explicit follow-up):
-
-- Teach-rule format — does the Learn tab surface raw `TextReplacements` strings
-  (the `AdvancedTab` free-form `find => replace` per line) or a structured row UI?
+**Open questions** — none outstanding. All previously-listed questions are resolved
+above: suppression-set serialization = JSON; footgun = capture in P4, guard is an
+explicit follow-up; teach-rule format in the Learn tab = **structured rows only**
+(user rules as editable rows + built-in toggle rows; the raw `find => replace`
+editor stays in `AdvancedTab`).
 
 ## Scope & phasing
 
