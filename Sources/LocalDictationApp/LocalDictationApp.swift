@@ -389,4 +389,8 @@ private struct OverlayPreview: View {
 extension KeyboardShortcuts.Name {
     @MainActor
     static let holdToDictate = Self("holdToDictate", default: .init(.space, modifiers: [.control]))
+    /// Opens the review panel for the last dictation (Door #1). Pressing it while
+    /// the "Typed" card is up — or any time after — reviews the most recent result.
+    @MainActor
+    static let reviewLastDictation = Self("reviewLastDictation", default: .init(.z, modifiers: [.option]))
 }

@@ -255,7 +255,7 @@ struct OverlayView: View {
                 .transition(.scale.combined(with: .opacity))
 
             if !state.detail.isEmpty {
-                Text("“\(state.detail)”")
+                Text(doneAttributed)
                     .font(.system(size: 15))
                     .foregroundStyle(ink)
                     .multilineTextAlignment(.center)
@@ -263,9 +263,44 @@ struct OverlayView: View {
                     .padding(13)
                     .frame(maxWidth: .infinity)
                     .background(RoundedRectangle(cornerRadius: 14).fill(ink.opacity(0.05)))
+                if !state.swappedRanges.isEmpty {
+                    Text("⌥Z to review")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(inkDim)
+                }
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The typed text with swapped words flat-underlined in the brand emerald.
+    private var doneAttributed: AttributedString {
+        let text = "“\(state.detail)”"
+        let ranges = state.swappedRanges
+        guard !ranges.isEmpty else { return AttributedString(text) }
+        // The display string has a leading curly quote, so swap ranges (in `detail`)
+        // are offset by one UTF-16 unit.
+        let ns = text as NSString
+        let valid = ranges
+            .map { NSRange(location: $0.location + 1, length: $0.length) }
+            .filter { $0.location >= 0 && $0.location + $0.length <= ns.length }
+            .sorted { $0.location < $1.location }
+        var result = AttributedString()
+        var cursor = 0
+        for range in valid {
+            if range.location > cursor {
+                result += AttributedString(ns.substring(with: NSRange(location: cursor, length: range.location - cursor)))
+            }
+            var swapped = AttributedString(ns.substring(with: range))
+            swapped.underlineStyle = .single
+            swapped.foregroundColor = Brand.emerald
+            result += swapped
+            cursor = range.location + range.length
+        }
+        if cursor < ns.length {
+            result += AttributedString(ns.substring(from: cursor))
+        }
+        return result
     }
 
     private var errorBody: some View {

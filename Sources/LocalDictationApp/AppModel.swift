@@ -38,6 +38,9 @@ final class AppModel {
     /// it. Transient (in-memory only). See enrichWithOCR.
     private var ocrCache: (app: String, text: String, at: Date)?
     private var ocrTask: Task<Void, Never>?
+    /// Floating review panel for the Door #1 hotkey, and the last dictation it shows.
+    private let reviewPanelController = ReviewPanelController()
+    private var lastRecord: CorrectionRecord?
     /// AX window text shorter than this counts as "nothing usable" → OCR may fill in.
     private static let minVisibleTextChars = 24
     /// A cached OCR result stays usable this long; refreshes are throttled to at
@@ -65,6 +68,11 @@ final class AppModel {
                 guard let self, AppSettingsSnapshot.current.activation == .hold else { return }
                 await self.endHold()
             }
+        }
+
+        // Door #1: open the review panel for the most recent dictation.
+        KeyboardShortcuts.onKeyDown(for: .reviewLastDictation) { [weak self] in
+            Task { @MainActor in self?.presentReview() }
         }
 
         // Escape aborts an in-progress dictation (discard, paste nothing). Global
@@ -340,23 +348,30 @@ final class AppModel {
             status = transcript.isEmpty ? "Idle" : "Inserted"
             errorMessage = nil
             if !transcript.isEmpty { recordHistory(transcript) }
-            // Log this dictation + its attributed edits for the Learn-tab review
-            // queue (text only; gated on the privacy-respecting logCorrections toggle).
-            if settings.logCorrections, !transcript.isEmpty, let edits = workflow.lastTranscriptAndEdits {
-                CorrectionLogStore.append(CorrectionRecord(
+
+            // Build the correction record once: it becomes the last reviewable result
+            // (Door #1 hotkey), the Learn-tab log entry, and the swap underlines on
+            // the "Typed" card.
+            var swappedRanges: [NSRange] = []
+            if !transcript.isEmpty, let edits = workflow.lastTranscriptAndEdits {
+                let record = CorrectionRecord(
                     raw: edits.raw,
                     prePolish: edits.prePolish,
                     inserted: edits.final,
                     segmentA: edits.segmentA,
                     segmentB: edits.segmentB
-                ))
+                )
+                lastRecord = record
+                // text only; gated on the privacy-respecting logCorrections toggle.
+                if settings.logCorrections { CorrectionLogStore.append(record) }
+                swappedRanges = validSwapRanges(in: transcript, edits: edits.segmentA + edits.segmentB)
             }
 
             if settings.showOverlay {
                 if transcript.isEmpty {
                     overlayController.hide(after: 0.4)
                 } else {
-                    overlayController.showDone(text: transcript)
+                    overlayController.showDone(text: transcript, swappedRanges: swappedRanges)
                     overlayController.hide(after: 2.4)
                 }
             }
@@ -546,6 +561,27 @@ final class AppModel {
     private func recordHistory(_ transcript: String) {
         guard AppSettingsSnapshot.current.saveHistory else { return }
         TranscriptHistoryStore.append(transcript)
+    }
+
+    /// Open the review panel for the most recent dictation (Door #1 hotkey). No-op
+    /// until a dictation has produced a record this session.
+    func presentReview() {
+        guard let lastRecord else { return }
+        reviewPanelController.present(record: lastRecord)
+    }
+
+    /// Edit ranges that still line up with the displayed text — only swaps whose
+    /// output span matches, so a polished/replaced string never gets a wrong
+    /// underline (the polish wall: pre-polish ranges may not map to post-polish text).
+    private func validSwapRanges(in text: String, edits: [Edit]) -> [NSRange] {
+        let ns = text as NSString
+        return edits.compactMap { edit in
+            guard !edit.to.isEmpty,
+                  edit.range.location >= 0,
+                  edit.range.location + edit.range.length <= ns.length,
+                  ns.substring(with: edit.range) == edit.to else { return nil }
+            return edit.range
+        }
     }
 
     /// Periodically transcribes the audio captured so far and shows it in the

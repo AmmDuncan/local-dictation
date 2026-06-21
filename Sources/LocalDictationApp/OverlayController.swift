@@ -19,6 +19,9 @@ final class OverlayState {
     var detail: String = ""
     var level: Double = 0
     var actionTitle: String?
+    /// Ranges (UTF-16, in `detail`) of words the system swapped, for the "Typed"
+    /// card to flat-underline. Empty unless the `.done` card has reviewable swaps.
+    var swappedRanges: [NSRange] = []
 
     @ObservationIgnored var action: (() -> Void)?
 }
@@ -68,8 +71,9 @@ final class OverlayController {
         present(phase: .transcribing, title: "Transcribing", detail: "Private, on your Mac")
     }
 
-    func showDone(text: String) {
+    func showDone(text: String, swappedRanges: [NSRange] = []) {
         stopLevelUpdates()
+        state.swappedRanges = swappedRanges
         present(phase: .done, title: "Typed", detail: text)
     }
 
@@ -109,6 +113,7 @@ final class OverlayController {
             state.actionTitle = nil
             state.action = nil
         }
+        if phase != .done { state.swappedRanges = [] }
         state.phase = phase
         state.title = title
         state.detail = detail
