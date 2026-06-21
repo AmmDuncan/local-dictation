@@ -9,12 +9,14 @@ import SwiftUI
 final class ReviewPanelController {
     private var panel: NSPanel?
 
-    func present(record: CorrectionRecord) {
+    func present(record: CorrectionRecord, onReinsert: ((String) -> Void)? = nil) {
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.contentView = NSHostingView(rootView: ReviewPanel(record: record) { [weak panel] in
-            panel?.orderOut(nil)
-        })
+        panel.contentView = NSHostingView(rootView: ReviewPanel(
+            record: record,
+            onClose: { [weak panel] in panel?.orderOut(nil) },
+            onReinsert: onReinsert
+        ))
         if !panel.isVisible { panel.center() }
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

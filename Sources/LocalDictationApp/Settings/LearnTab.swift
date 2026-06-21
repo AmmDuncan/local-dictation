@@ -10,6 +10,7 @@ struct LearnTab: View {
     @Binding var logCorrections: Bool
     @Binding var textReplacements: String
     @Binding var rejectedBuiltInSwaps: String
+    @Binding var liveReinsertionEnabled: Bool
 
     @State private var records: [CorrectionRecord] = []
     @State private var newFrom = ""
@@ -71,16 +72,24 @@ struct LearnTab: View {
             } header: {
                 Text("Built-in corrections")
             } footer: {
-                Text("Turn off any built-in swap you don't want. (Takes effect once review is fully enabled.)")
+                Text("Turn off any built-in swap you don't want.")
+            }
+
+            Section {
+                Toggle("Replace the current text when I fix it (experimental)", isOn: $liveReinsertionEnabled)
+            } header: {
+                Text("Experimental")
+            } footer: {
+                Text("When you fix a dictation right after speaking it (⌥Z), also replace the text already typed — not just learn for next time. Best-effort: only in apps that support it, and only if you haven't moved the cursor. Off by default.")
             }
         }
         .formStyle(.grouped)
         .onAppear(perform: reload)
         .sheet(item: $reviewing) { record in
-            ReviewPanel(record: record) {
+            ReviewPanel(record: record, onClose: {
                 reviewing = nil
                 reload()
-            }
+            })
         }
     }
 

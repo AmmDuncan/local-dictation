@@ -27,11 +27,59 @@ enum AXSupport {
         }
     }
 
-    /// True for a secure (password) field — its text is NEVER read. Privacy
-    /// non-negotiable; checked by both role and subrole.
+    /// True for a secure (password) field — its text is NEVER read or written.
+    /// Privacy non-negotiable; checked by both role and subrole.
     @MainActor
     static func isSecure(_ element: AXUIElement) -> Bool {
         string(element, kAXRoleAttribute as String) == "AXSecureTextField"
             || string(element, kAXSubroleAttribute as String) == "AXSecureTextField"
+    }
+
+    /// The system-wide focused UI element, or nil. Captured at insert time for
+    /// experimental live re-insertion (so the target survives the review panel
+    /// taking key focus).
+    @MainActor
+    static func focusedElement() -> AXUIElement? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute as CFString, &ref
+        ) == .success, let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
+        return (ref as! AXUIElement)
+    }
+
+    /// The element's selected-text range (caret = a zero-length range), or nil.
+    @MainActor
+    static func selectedRange(_ element: AXUIElement) -> NSRange? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &ref) == .success,
+              let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(ref as! AXValue, .cfRange, &range) else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+
+    /// The currently selected text, or nil. Secure fields are never read.
+    @MainActor
+    static func selectedText(_ element: AXUIElement) -> String? {
+        guard !isSecure(element) else { return nil }
+        return string(element, kAXSelectedTextAttribute as String)
+    }
+
+    /// Set the selected-text range. Secure fields are never written. Returns success.
+    @MainActor
+    @discardableResult
+    static func setSelectedRange(_ element: AXUIElement, _ range: NSRange) -> Bool {
+        guard !isSecure(element) else { return false }
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let value = AXValueCreate(.cfRange, &cfRange) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success
+    }
+
+    /// Replace the current selection with `text`. Secure fields are never written.
+    @MainActor
+    @discardableResult
+    static func setSelectedText(_ element: AXUIElement, _ text: String) -> Bool {
+        guard !isSecure(element) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success
     }
 }

@@ -10,10 +10,14 @@ import SwiftUI
 struct ReviewPanel: View {
     let record: CorrectionRecord
     var onClose: () -> Void
+    /// Provided only by the Door #1 floating panel: re-insert the corrected full text
+    /// into the still-focused field (experimental). Nil from the Learn-tab sheet.
+    var onReinsert: ((String) -> Void)?
 
     @AppStorage(AppSettingsKeys.textReplacements) private var textReplacements = AppSettingsSnapshot.Defaults.textReplacements
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
+    @AppStorage(AppSettingsKeys.liveReinsertionEnabled) private var liveReinsertionEnabled = AppSettingsSnapshot.Defaults.liveReinsertionEnabled
 
     @State private var anchor: Int?
     @State private var head: Int?
@@ -118,13 +122,15 @@ struct ReviewPanel: View {
         }
     }
 
-    private func selectedText(_ range: ClosedRange<Int>) -> String {
+    private func unionRange(_ range: ClosedRange<Int>) -> NSRange {
         let slice = tokens[range]
-        guard let first = slice.first, let last = slice.last else { return "" }
-        let ns = displayText as NSString
-        let union = NSRange(location: first.range.location,
-                            length: last.range.location + last.range.length - first.range.location)
-        return ns.substring(with: union)
+        guard let first = slice.first, let last = slice.last else { return NSRange(location: 0, length: 0) }
+        return NSRange(location: first.range.location,
+                       length: last.range.location + last.range.length - first.range.location)
+    }
+
+    private func selectedText(_ range: ClosedRange<Int>) -> String {
+        (displayText as NSString).substring(with: unionRange(range))
     }
 
     /// The lone swap the selection sits within, or nil (no swap, or spans multiple).
@@ -155,8 +161,10 @@ struct ReviewPanel: View {
                     Text("Teach a fix for “\(selectedText(range))”").font(.callout)
                     HStack {
                         TextField("correction", text: $editValue)
-                        Button("Teach") { applyTeach(heard: selectedText(range), correction: editValue) }
-                            .disabled(trimmed(editValue).isEmpty)
+                        Button("Teach") {
+                            applyTeach(heard: selectedText(range), correction: editValue, span: unionRange(range))
+                        }
+                        .disabled(trimmed(editValue).isEmpty)
                     }
                 }
                 Toggle("Also bias recognition toward this word", isOn: $alsoBias)
@@ -173,6 +181,7 @@ struct ReviewPanel: View {
         if let id = RuleDerivation.suppressionIdentity(for: edit) {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
+        maybeReinsert(span: edit.range, expecting: edit.to, replacement: edit.from)
         clearSelection()
     }
 
@@ -182,12 +191,25 @@ struct ReviewPanel: View {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
         appendTeach(heard: edit.from, correction: newValue)
+        maybeReinsert(span: edit.range, expecting: edit.to, replacement: trimmed(newValue))
         clearSelection()
     }
 
-    private func applyTeach(heard: String, correction: String) {
+    private func applyTeach(heard: String, correction: String, span: NSRange) {
         appendTeach(heard: heard, correction: correction)
+        maybeReinsert(span: span, expecting: heard, replacement: trimmed(correction))
         clearSelection()
+    }
+
+    /// Experimental: re-insert the corrected full text into the current field, but
+    /// only when the span still lines up with what was inserted (no polish/replacement
+    /// drift) — otherwise it's learn-for-next-time only.
+    private func maybeReinsert(span: NSRange, expecting: String, replacement: String) {
+        guard liveReinsertionEnabled, let onReinsert, !replacement.isEmpty else { return }
+        let ns = record.inserted as NSString
+        guard span.location >= 0, span.location + span.length <= ns.length,
+              ns.substring(with: span) == expecting else { return }
+        onReinsert(ns.replacingCharacters(in: span, with: replacement))
     }
 
     private func appendTeach(heard: String, correction: String) {
