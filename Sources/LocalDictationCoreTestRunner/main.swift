@@ -51,6 +51,10 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow command mode survives prose cleanup (caps/period)", testWorkflowCommandModeWithCleanup)
         await suite.run("Polish prompt is formatting cleanup only", testPolishPromptCleansOnly)
         await suite.run("Text replacements parse + whole-word apply", testTextReplacements)
+        await suite.run("Suppression set encode/decode/toggle/isSuppressed", testSuppressionSet)
+        await suite.run("TextReplacements tracked: output-space edits + rebasing", testTextReplacementsEditTracking)
+        await suite.run("Mishearing tracked: rules + clot edits, blood-clot spared", testMishearingEditTracking)
+        await suite.run("Command mode tracked: me->main + formatting edits, gated", testCommandModeEditTracking)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
@@ -996,6 +1000,100 @@ private func testTextReplacements() throws {
         "phrase trigger expands"
     )
     try expect(TextReplacements.apply(rules, to: "theory") == "theory", "must not replace inside a word")
+}
+
+private func testSuppressionSet() throws {
+    // Blank / invalid JSON decode to an empty set (never throws into the pipeline).
+    try expect(SuppressionSet.decode("") == [], "blank decodes to empty")
+    try expect(SuppressionSet.decode("{not json") == [], "invalid decodes to empty")
+    try expect(
+        !SuppressionSet.isSuppressed("mishearing:clot→Claude", in: ""),
+        "nothing suppressed when the set is empty"
+    )
+
+    // encode → decode round-trips the identity set.
+    let ids: Set<String> = ["mishearing:clot→Claude", "command:me→main"]
+    let json = SuppressionSet.encode(ids)
+    try expect(SuppressionSet.decode(json) == ids, "encode/decode round-trips")
+    try expect(
+        SuppressionSet.isSuppressed("command:me→main", in: json),
+        "a member identity reads back as suppressed"
+    )
+
+    // toggling on adds, off removes; both re-encode to a stable string.
+    let added = SuppressionSet.toggling("mishearing:cloud-code", in: json, on: true)
+    try expect(SuppressionSet.isSuppressed("mishearing:cloud-code", in: added), "toggle on adds")
+    let removed = SuppressionSet.toggling("command:me→main", in: added, on: false)
+    try expect(!SuppressionSet.isSuppressed("command:me→main", in: removed), "toggle off removes")
+    try expect(SuppressionSet.isSuppressed("mishearing:cloud-code", in: removed), "toggle off spares others")
+}
+
+private func testTextReplacementsEditTracking() throws {
+    let rules = TextReplacements.parse("teh => the\nclot => Claude")
+    let (out, edits) = TextReplacements.applyTracked(rules, to: "teh clot here", source: .replacement)
+    try expect(out == "the Claude here", "tracked output equals apply(): got \(out)")
+    try expect(out == TextReplacements.apply(rules, to: "teh clot here"), "apply() delegates to applyTracked")
+    let sorted = edits.sorted { $0.range.location < $1.range.location }
+    try expect(sorted.count == 2, "two edits, got \(sorted.count)")
+    try expect(sorted[0].from == "teh" && sorted[0].to == "the" && sorted[0].source == .replacement, "edit 0 text+source")
+    try expect(sorted[0].range.location == 0 && sorted[0].range.length == 3, "edit 0 output range 0..3, got \(sorted[0].range)")
+    try expect(sorted[1].from == "clot" && sorted[1].to == "Claude", "edit 1 text")
+    try expect(sorted[1].range.location == 4 && sorted[1].range.length == 6, "edit 1 output range 4..10, got \(sorted[1].range)")
+
+    // A length-changing earlier replacement rebases a later edit's output range forward.
+    let r2 = TextReplacements.parse("c => dddd\na => bb")
+    let (out2, edits2) = TextReplacements.applyTracked(r2, to: "c a", source: .replacement)
+    try expect(out2 == "dddd bb", "rebase output: got \(out2)")
+    let s2 = edits2.sorted { $0.range.location < $1.range.location }
+    try expect(s2[0].to == "dddd" && s2[0].range.location == 0 && s2[0].range.length == 4, "c->dddd at 0..4")
+    try expect(s2[1].to == "bb" && s2[1].range.location == 5 && s2[1].range.length == 2, "a->bb rebased to 5..7, got \(s2[1].range)")
+}
+
+private func testMishearingEditTracking() throws {
+    // Rules path: "cloud code" -> "Claude Code", tagged .mishearing, range maps to output.
+    let (o1, e1) = MishearingCorrections.applyTracked(to: "open cloud code now")
+    try expect(o1 == "open Claude Code now", "rules output: \(o1)")
+    try expect(o1 == MishearingCorrections.apply(to: "open cloud code now"), "apply() delegates to applyTracked")
+    let m1 = e1.first { $0.to == "Claude Code" }
+    try expect(m1 != nil && m1!.source == .mishearing, "cloud-code edit tagged .mishearing")
+    try expect(m1!.from == "cloud code", "from = heard text")
+    try expect((o1 as NSString).substring(with: m1!.range) == "Claude Code", "range points at the output span")
+
+    // correctClot path emits its own edit (not routed through the rules).
+    let (o2, e2) = MishearingCorrections.applyTracked(to: "ask clot please")
+    try expect(o2 == "ask Claude please", "clot output: \(o2)")
+    let c2 = e2.first { $0.from.lowercased() == "clot" }
+    try expect(c2 != nil && c2!.to == "Claude" && c2!.source == .mishearing, "clot edit present")
+    try expect((o2 as NSString).substring(with: c2!.range) == "Claude", "clot range maps to output")
+
+    // "blood clot" is spared (negative lookbehind) — no edits at all.
+    let (o3, e3) = MishearingCorrections.applyTracked(to: "a blood clot here")
+    try expect(o3 == "a blood clot here", "blood clot spared: \(o3)")
+    try expect(e3.isEmpty, "no edits when nothing changed, got \(e3.count)")
+}
+
+private func testCommandModeEditTracking() throws {
+    let terminal = ContextBias.classify(appName: "Terminal")
+
+    // In command context: "me" -> "main", tagged .command, range maps to output.
+    let (o, e) = CommandModeCorrections.applyTracked(to: "me", appClass: terminal, precedingText: "git push origin")
+    try expect(o == "main", "command output: \(o)")
+    try expect(
+        o == CommandModeCorrections.apply(to: "me", appClass: terminal, precedingText: "git push origin"),
+        "apply() delegates to applyTracked"
+    )
+    let me = e.first { $0.from.lowercased() == "me" && $0.to == "main" }
+    try expect(me != nil && me!.source == .command, "me->main edit tagged .command")
+    try expect((o as NSString).substring(with: me!.range) == "main", "range maps to output span")
+
+    // commandFormatting emits a period-strip edit (to == "").
+    let (o2, e2) = CommandModeCorrections.applyTracked(to: "push origin me.", appClass: terminal, precedingText: "git")
+    try expect(o2 == "push origin main", "me->main + trailing period stripped: \(o2)")
+    try expect(e2.contains { $0.from == "." && $0.to == "" && $0.source == .command }, "period-strip edit present")
+
+    // Gated: terminal app but no git command in the line → untouched, no edits.
+    let (o3, e3) = CommandModeCorrections.applyTracked(to: "remind me", appClass: terminal, precedingText: "please")
+    try expect(o3 == "remind me" && e3.isEmpty, "no git command -> untouched, no edits")
 }
 
 private func testInsertionFormatter() throws {

@@ -50,26 +50,51 @@ public enum CommandModeCorrections {
         appClass: ContextBias.AppClass,
         precedingText: String?
     ) -> String {
-        let line = [precedingText, transcript].compactMap { $0 }.joined(separator: " ")
-        guard isCommandContext(appClass: appClass, line: line) else { return transcript }
+        applyTracked(to: transcript, appClass: appClass, precedingText: precedingText).0
+    }
 
-        var corrected = TextReplacements.apply(branchRules, to: transcript)
-        corrected = commandFormatting(corrected)
-        return corrected
+    /// Like `apply`, but also returns one `.command` `Edit` per change (ranges in the
+    /// output): the branch-homophone substitutions plus the `commandFormatting`
+    /// mutations (trailing-period strip, `Git`→`git`). Returns the transcript
+    /// unchanged with no edits outside command context.
+    public static func applyTracked(
+        to transcript: String,
+        appClass: ContextBias.AppClass,
+        precedingText: String?
+    ) -> (String, [Edit]) {
+        let line = [precedingText, transcript].compactMap { $0 }.joined(separator: " ")
+        guard isCommandContext(appClass: appClass, line: line) else { return (transcript, []) }
+
+        var (corrected, edits) = TextReplacements.applyTracked(branchRules, to: transcript, source: .command)
+        let (formatted, formatEdits, formatDeltas) = commandFormattingTracked(corrected)
+        edits = Edit.shifting(edits, by: formatDeltas)
+        edits.append(contentsOf: formatEdits)
+        return (formatted, edits)
     }
 
     /// Command-aware formatting: undo the prose cleanup that's wrong for a shell
     /// command — a trailing sentence period (`git push origin main.` breaks) and a
     /// capitalized leading `Git` (the shell is case-sensitive). Only ever runs in
     /// command context.
-    private static func commandFormatting(_ text: String) -> String {
+    private static func commandFormattingTracked(
+        _ text: String
+    ) -> (String, [Edit], [(at: Int, delta: Int)]) {
         var result = text
+        var edits: [Edit] = []
+        var deltas: [(at: Int, delta: Int)] = []
+
         if result.hasSuffix(".") {
+            let periodLocation = (result as NSString).length - 1
             result.removeLast()
+            // Deletion: zero-length `to` at the now-end of the string.
+            edits.append(Edit(location: (result as NSString).length, length: 0, from: ".", to: "", source: .command))
+            deltas.append((at: periodLocation, delta: -1))
         }
         if result.hasPrefix("Git ") {
             result = "git " + result.dropFirst(4)
+            // Same length, so no offset delta; model the word change at the start.
+            edits.append(Edit(location: 0, length: 3, from: "Git", to: "git", source: .command))
         }
-        return result
+        return (result, edits, deltas)
     }
 }

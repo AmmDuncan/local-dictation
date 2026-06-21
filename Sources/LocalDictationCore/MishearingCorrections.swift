@@ -28,7 +28,20 @@ public enum MishearingCorrections {
 
     /// Apply the built-in corrections to `text`.
     public static func apply(to text: String) -> String {
-        correctClot(in: TextReplacements.apply(rules, to: text))
+        applyTracked(to: text).0
+    }
+
+    /// Like `apply`, but also returns one `.mishearing` `Edit` per substitution
+    /// (ranges in the output string) — both the rule-driven swaps and the separate
+    /// `clot` correction. The `rules` run first (via the shared tracking engine),
+    /// then `correctClot` on their result; the rule edits are rebased through the
+    /// clot pass so all ranges land in the final output space.
+    public static func applyTracked(to text: String) -> (String, [Edit]) {
+        var (result, edits) = TextReplacements.applyTracked(rules, to: text, source: .mishearing)
+        let (clotResult, clotEdits, clotDeltas) = correctClotTracked(in: result)
+        edits = Edit.shifting(edits, by: clotDeltas)
+        edits.append(contentsOf: clotEdits)
+        return (clotResult, edits)
     }
 
     /// Matches a whole-word "clot" that is NOT the genuine medical phrase "blood
@@ -40,10 +53,34 @@ public enum MishearingCorrections {
 
     /// "clot" -> "Claude" everywhere EXCEPT "blood clot". In developer dictation a
     /// bare "clot" is virtually always a misheard "Claude"; "clots" / "clotting" /
-    /// "clotted" are left alone by the whole-word boundary.
-    private static func correctClot(in text: String) -> String {
-        guard let clotRegex else { return text }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return clotRegex.stringByReplacingMatches(in: text, range: range, withTemplate: "Claude")
+    /// "clotted" are left alone by the whole-word boundary. Returns the corrected
+    /// string, one `.mishearing` `Edit` per match (range in the output), and the
+    /// per-match length deltas (so a caller can rebase edits made before this pass).
+    private static func correctClotTracked(
+        in text: String
+    ) -> (String, [Edit], [(at: Int, delta: Int)]) {
+        guard let clotRegex else { return (text, [], []) }
+        let ns = text as NSString
+        let matches = clotRegex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return (text, [], []) }
+
+        let replacement = "Claude"
+        var newResult = ""
+        var edits: [Edit] = []
+        var deltas: [(at: Int, delta: Int)] = []
+        var lastEnd = 0
+        for match in matches {
+            let r = match.range
+            newResult += ns.substring(with: NSRange(location: lastEnd, length: r.location - lastEnd))
+            let fromText = ns.substring(with: r)
+            let outLocation = (newResult as NSString).length
+            newResult += replacement
+            let outLength = (replacement as NSString).length
+            edits.append(Edit(location: outLocation, length: outLength, from: fromText, to: replacement, source: .mishearing))
+            deltas.append((at: r.location, delta: outLength - r.length))
+            lastEnd = r.location + r.length
+        }
+        newResult += ns.substring(from: lastEnd)
+        return (newResult, edits, deltas)
     }
 }
