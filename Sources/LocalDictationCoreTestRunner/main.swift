@@ -1065,6 +1065,15 @@ private func testTextReplacementsEditTracking() throws {
     let s2 = edits2.sorted { $0.range.location < $1.range.location }
     try expect(s2[0].to == "dddd" && s2[0].range.location == 0 && s2[0].range.length == 4, "c->dddd at 0..4")
     try expect(s2[1].to == "bb" && s2[1].range.location == 5 && s2[1].range.length == 2, "a->bb rebased to 5..7, got \(s2[1].range)")
+
+    // UTF-16 surrogate: a swap after an emoji must count the emoji's two code units,
+    // so the edit range lands correctly past it (never splits the surrogate pair).
+    let r3 = TextReplacements.parse("clot => Claude")
+    let (out3, edits3) = TextReplacements.applyTracked(r3, to: "😀 clot", source: .mishearing)
+    try expect(out3 == "😀 Claude", "emoji preserved: \(out3)")
+    try expect(edits3.count == 1, "one edit, got \(edits3.count)")
+    try expect((out3 as NSString).substring(with: edits3[0].range) == "Claude", "range maps past the surrogate pair")
+    try expect(edits3[0].range.location == 3, "Claude at UTF-16 loc 3 (emoji 2 + space 1), got \(edits3[0].range.location)")
 }
 
 private func testMishearingEditTracking() throws {

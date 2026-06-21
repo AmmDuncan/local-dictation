@@ -20,6 +20,10 @@ public enum EditTracking {
         source: Edit.Source
     ) -> (String, [Edit], [(at: Int, delta: Int)]) {
         guard !replacements.isEmpty else { return (text, [], []) }
+        // Defensive: process in location order even if a caller passes them unsorted
+        // (all current callers pass regex matches, which are already sorted, so this
+        // is a no-op for them). Overlapping ranges remain a caller error.
+        let replacements = replacements.sorted { $0.range.location < $1.range.location }
         let ns = text as NSString
         var newResult = ""
         var edits: [Edit] = []

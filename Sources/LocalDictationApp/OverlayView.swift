@@ -288,6 +288,9 @@ struct OverlayView: View {
         var result = AttributedString()
         var cursor = 0
         for range in valid {
+            // Skip a range that overlaps an already-emitted one (defensive: a negative
+            // gap length would crash; swap ranges are non-overlapping in practice).
+            guard range.location >= cursor else { continue }
             if range.location > cursor {
                 result += AttributedString(ns.substring(with: NSRange(location: cursor, length: range.location - cursor)))
             }

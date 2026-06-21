@@ -212,6 +212,10 @@ final class AppModel {
         let settings = AppSettingsSnapshot.current
         errorMessage = nil
         lastTranscript = ""
+        // Invalidate the previous review target: a new dictation supersedes it, and
+        // if this one yields nothing the ⌥Z hotkey must not review a stale result.
+        lastRecord = nil
+        reinserter = nil
 
         guard await PermissionStatus.requestMicrophoneAccess() else {
             isStarting = false

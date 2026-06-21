@@ -4,8 +4,13 @@ import LocalDictationCore
 /// Experimental live re-insertion via AX select-verify-replace. Captures the target
 /// field + the text we inserted at insert time (before the review panel steals key
 /// focus); when the user applies a correction, selects the inserted span, reads it
-/// back, and replaces it only if it still matches (see `ReinsertionDecision`). Safe
-/// by construction — a mismatch aborts and the field is left untouched.
+/// back, and replaces it only if it still matches (see `ReinsertionDecision`).
+///
+/// Best-effort, not bulletproof: it only ever replaces a span it just confirmed
+/// holds the exact inserted text, so it won't clobber arbitrary content — but there
+/// is a tiny window between the verify and the replace, and it assumes the original
+/// field is still the one that has the text. That's why it's experimental + default
+/// off; it degrades to learn-only where AX writes aren't honored.
 @MainActor
 struct LiveReinserter {
     let element: AXUIElement
