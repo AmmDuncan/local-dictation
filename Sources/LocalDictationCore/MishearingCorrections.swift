@@ -36,12 +36,21 @@ public enum MishearingCorrections {
     /// `clot` correction. The `rules` run first (via the shared tracking engine),
     /// then `correctClot` on their result; the rule edits are rebased through the
     /// clot pass so all ranges land in the final output space.
-    public static func applyTracked(to text: String) -> (String, [Edit]) {
-        var (result, edits) = TextReplacements.applyTracked(rules, to: text, source: .mishearing)
-        let (clotResult, clotEdits, clotDeltas) = correctClotTracked(in: result)
-        edits = Edit.shifting(edits, by: clotDeltas)
-        edits.append(contentsOf: clotEdits)
-        return (clotResult, edits)
+    public static func applyTracked(to text: String, suppressing: Set<String> = []) -> (String, [Edit]) {
+        let activeRules = rules.filter { rule in
+            guard let id = RuleDerivation.suppressionIdentity(source: .mishearing, from: rule.pattern, to: rule.replacement) else { return true }
+            return !suppressing.contains(id)
+        }
+        var (result, edits) = TextReplacements.applyTracked(activeRules, to: text, source: .mishearing)
+        let clotSuppressed = RuleDerivation.suppressionIdentity(source: .mishearing, from: "clot", to: "Claude")
+            .map(suppressing.contains) ?? false
+        if !clotSuppressed {
+            let (clotResult, clotEdits, clotDeltas) = correctClotTracked(in: result)
+            edits = Edit.shifting(edits, by: clotDeltas)
+            edits.append(contentsOf: clotEdits)
+            result = clotResult
+        }
+        return (result, edits)
     }
 
     /// Matches a whole-word "clot" that is NOT the genuine medical phrase "blood

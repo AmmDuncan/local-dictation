@@ -59,6 +59,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("RuleDerivation: revert identity + teach rule", testRuleDerivation)
         await suite.run("CorrectionLog: changeCount, codable, cap, pending", testCorrectionLog)
         await suite.run("BuiltInCorrections: stable identities match revert convention", testBuiltInCorrections)
+        await suite.run("Apply path consults the suppression set", testSuppressionConsult)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
@@ -1203,6 +1204,31 @@ private func testBuiltInCorrections() throws {
     try expect(
         all.contains { $0.identity == RuleDerivation.suppressionIdentity(for: me) },
         "built-in identity matches the revert/suppression convention"
+    )
+}
+
+private func testSuppressionConsult() throws {
+    // Mishearing: clot fires by default; suppressing its identity skips it; others stay.
+    try expect(MishearingCorrections.applyTracked(to: "ask clot").0 == "ask Claude", "clot fires by default")
+    let suppressed: Set<String> = ["mishearing:clot→Claude"]
+    let (o, e) = MishearingCorrections.applyTracked(to: "ask clot", suppressing: suppressed)
+    try expect(o == "ask clot", "suppressed clot is not applied, got \(o)")
+    try expect(e.isEmpty, "no edit emitted when suppressed")
+    try expect(
+        MishearingCorrections.applyTracked(to: "open cloud code", suppressing: suppressed).0 == "open Claude Code",
+        "a non-suppressed rule still fires"
+    )
+
+    // Command: me->main fires by default; suppressing its identity leaves it alone.
+    let term = ContextBias.classify(appName: "Terminal")
+    try expect(
+        CommandModeCorrections.applyTracked(to: "me", appClass: term, precedingText: "git push origin").0 == "main",
+        "me->main fires by default"
+    )
+    let cmdSuppressed: Set<String> = ["command:me→main"]
+    try expect(
+        CommandModeCorrections.applyTracked(to: "me", appClass: term, precedingText: "git push origin", suppressing: cmdSuppressed).0 == "me",
+        "suppressed me->main is left alone"
     )
 }
 

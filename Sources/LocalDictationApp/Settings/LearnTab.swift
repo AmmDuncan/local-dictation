@@ -14,6 +14,7 @@ struct LearnTab: View {
     @State private var records: [CorrectionRecord] = []
     @State private var newFrom = ""
     @State private var newTo = ""
+    @State private var reviewing: CorrectionRecord?
 
     private var userRules: [TextReplacements.Rule] { TextReplacements.parse(textReplacements) }
 
@@ -75,6 +76,12 @@ struct LearnTab: View {
         }
         .formStyle(.grouped)
         .onAppear(perform: reload)
+        .sheet(item: $reviewing) { record in
+            ReviewPanel(record: record) {
+                reviewing = nil
+                reload()
+            }
+        }
     }
 
     private func ruleLabel(from: String, to: String) -> some View {
@@ -112,6 +119,8 @@ struct LearnTab: View {
                     .lineLimit(1)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { reviewing = record }
     }
 
     private func builtInBinding(_ entry: BuiltInCorrections.Entry) -> Binding<Bool> {

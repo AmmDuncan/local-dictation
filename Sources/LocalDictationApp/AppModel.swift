@@ -431,18 +431,20 @@ final class AppModel {
         let appClass = ContextBias.classify(appName: context?.activeApplicationName)
         let precedingText = context?.precedingText
         let commandMode = context != nil && appClass.allowsCommandMode
+        // Built-in swaps the user has rejected in the Learn tab — skipped at apply time.
+        let suppressed = SuppressionSet.decode(settings.rejectedBuiltInSwaps)
         let preCorrect: (@Sendable (String) -> (String, [Edit]))? = (wantsCorrection || commandMode)
             ? { @Sendable text in
                 var result = text
                 var passes: [[Edit]] = []
                 if wantsCorrection {
-                    let (corrected, edits) = MishearingCorrections.applyTracked(to: result)
+                    let (corrected, edits) = MishearingCorrections.applyTracked(to: result, suppressing: suppressed)
                     result = corrected
                     passes.append(edits)
                 }
                 if commandMode {
                     let (corrected, edits) = CommandModeCorrections.applyTracked(
-                        to: result, appClass: appClass, precedingText: precedingText
+                        to: result, appClass: appClass, precedingText: precedingText, suppressing: suppressed
                     )
                     result = corrected
                     passes.append(edits)

@@ -60,12 +60,17 @@ public enum CommandModeCorrections {
     public static func applyTracked(
         to transcript: String,
         appClass: ContextBias.AppClass,
-        precedingText: String?
+        precedingText: String?,
+        suppressing: Set<String> = []
     ) -> (String, [Edit]) {
         let line = [precedingText, transcript].compactMap { $0 }.joined(separator: " ")
         guard isCommandContext(appClass: appClass, line: line) else { return (transcript, []) }
 
-        var (corrected, edits) = TextReplacements.applyTracked(branchRules, to: transcript, source: .command)
+        let activeRules = branchRules.filter { rule in
+            guard let id = RuleDerivation.suppressionIdentity(source: .command, from: rule.pattern, to: rule.replacement) else { return true }
+            return !suppressing.contains(id)
+        }
+        var (corrected, edits) = TextReplacements.applyTracked(activeRules, to: transcript, source: .command)
         let (formatted, formatEdits, formatDeltas) = commandFormattingTracked(corrected)
         edits = Edit.shifting(edits, by: formatDeltas)
         edits.append(contentsOf: formatEdits)
