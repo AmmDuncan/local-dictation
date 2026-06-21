@@ -317,15 +317,8 @@ private func testPolishPreservesContentWords() throws {
 }
 
 private func testDictationContext() throws {
-    // appendingHistory caps to maxEntries and skips blanks.
-    var h: [String] = []
-    for i in 0..<15 { h = RecognitionContext.appendingHistory("line \(i)", to: h, maxEntries: 12) }
-    try expect(h.count == 12, "history should cap at 12, got \(h.count)")
-    try expect(h.first == "line 3", "should drop oldest, got \(h.first ?? "nil")")
-    h = RecognitionContext.appendingHistory("   ", to: h)
-    try expect(h.count == 12, "blank should not be added")
-
-    // prompt: vocabulary + recent history, capped.
+    // prompt: vocabulary + optional history (a general capability the app no
+    // longer feeds — see RecognitionContext), capped to maxChars.
     let p = RecognitionContext.prompt(vocabulary: "Nxabyte VAD Whisper", history: ["hello world"], maxChars: 100)
     try expect(p.contains("Nxabyte"), "prompt should include vocabulary")
     try expect(p.contains("hello world"), "prompt should include recent history")

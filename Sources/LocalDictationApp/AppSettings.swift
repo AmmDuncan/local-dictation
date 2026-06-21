@@ -12,7 +12,6 @@ enum AppSettingsKeys {
     static let polishWithAI = "polishWithAI"
     static let polishModelPath = "polishModelPath"
     static let customVocabulary = "customVocabulary"
-    static let useHistoryContext = "useHistoryContext"
     static let useDefaultVocabulary = "useDefaultVocabulary"
     static let useContextAwareness = "useContextAwareness"
     static let useScreenOCR = "useScreenOCR"
@@ -40,7 +39,6 @@ struct AppSettingsSnapshot: Equatable {
     var polishWithAI: Bool
     var polishModelPath: String
     var customVocabulary: String
-    var useHistoryContext: Bool
     var useDefaultVocabulary: Bool
     var useContextAwareness: Bool
     var useScreenOCR: Bool
@@ -73,7 +71,6 @@ struct AppSettingsSnapshot: Equatable {
             polishWithAI: defaults.object(forKey: AppSettingsKeys.polishWithAI) as? Bool ?? Defaults.polishWithAI,
             polishModelPath: defaults.string(forKey: AppSettingsKeys.polishModelPath) ?? Defaults.polishModelPath,
             customVocabulary: defaults.string(forKey: AppSettingsKeys.customVocabulary) ?? Defaults.customVocabulary,
-            useHistoryContext: defaults.object(forKey: AppSettingsKeys.useHistoryContext) as? Bool ?? Defaults.useHistoryContext,
             useDefaultVocabulary: defaults.object(forKey: AppSettingsKeys.useDefaultVocabulary) as? Bool ?? Defaults.useDefaultVocabulary,
             useContextAwareness: defaults.object(forKey: AppSettingsKeys.useContextAwareness) as? Bool ?? Defaults.useContextAwareness,
             useScreenOCR: defaults.object(forKey: AppSettingsKeys.useScreenOCR) as? Bool ?? Defaults.useScreenOCR,
@@ -98,7 +95,6 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.polishWithAI: Defaults.polishWithAI,
             AppSettingsKeys.polishModelPath: Defaults.polishModelPath,
             AppSettingsKeys.customVocabulary: Defaults.customVocabulary,
-            AppSettingsKeys.useHistoryContext: Defaults.useHistoryContext,
             AppSettingsKeys.useDefaultVocabulary: Defaults.useDefaultVocabulary,
             AppSettingsKeys.useContextAwareness: Defaults.useContextAwareness,
             AppSettingsKeys.useScreenOCR: Defaults.useScreenOCR,
@@ -145,7 +141,6 @@ struct AppSettingsSnapshot: Equatable {
         static let polishWithAI = false  // opt-in: needs the ~1.8GB model + resident llama-server
         static let polishModelPath = "~/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
         static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
-        static let useHistoryContext = true  // feed recent transcripts as context bias
         static let useDefaultVocabulary = true  // bias toward common terms (Claude, GitHub, …)
         // Use the focused app + caret-preceding text to bias recognition and enable
         // context-scoped command-mode corrections (e.g. "me" -> "main" after

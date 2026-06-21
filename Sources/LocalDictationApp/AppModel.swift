@@ -28,9 +28,6 @@ final class AppModel {
     private var pendingEnd: PendingEnd = .none
     private var escapeMonitor: Any?
     private var localEscapeMonitor: Any?
-    /// Rolling recent transcripts, persisted, used to bias whisper toward the
-    /// user's own words (fewer mishearings). See RecognitionContext.
-    private var history: [String] = UserDefaults.standard.stringArray(forKey: "dictationHistory") ?? []
 
     /// Gathers on-device context (frontmost app + caret text) when context
     /// awareness is on. AX-only, transient — see AccessibilityContextProvider.
@@ -467,16 +464,16 @@ final class AppModel {
         )
     }
 
-    /// Whisper context prompt from the user's vocabulary + recent history, plus
-    /// the live on-device context (focused app + caret-proximate text) when
-    /// available, to bias recognition toward their own words and what they're
-    /// typing into (fewer mishearings). Nil = none.
+    /// Whisper context prompt from the user's vocabulary plus the live on-device
+    /// context (focused app + caret-proximate text) when available, to bias
+    /// recognition toward their own words and what they're typing into (fewer
+    /// mishearings). Recognition is deliberately NOT biased from past transcripts —
+    /// that's a feedback loop where one bad result poisons the next. Nil = none.
     private func contextPrompt(settings: AppSettingsSnapshot, context: DictationContext?) -> String? {
         let promptContext = context.map(ContextBias.promptContext(for:))
         let prompt = RecognitionContext.prompt(
             vocabulary: settings.customVocabulary,
             defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
-            history: settings.useHistoryContext ? history : [],
             context: promptContext
         )
         return prompt.isEmpty ? nil : prompt
@@ -516,12 +513,11 @@ final class AppModel {
         }
     }
 
+    /// Persist the transcript to the user-facing history view (when enabled). This
+    /// is display only — it is never fed back into recognition (see contextPrompt).
     private func recordHistory(_ transcript: String) {
-        history = RecognitionContext.appendingHistory(transcript, to: history)
-        UserDefaults.standard.set(history, forKey: "dictationHistory")
-        if AppSettingsSnapshot.current.saveHistory {
-            TranscriptHistoryStore.append(transcript)
-        }
+        guard AppSettingsSnapshot.current.saveHistory else { return }
+        TranscriptHistoryStore.append(transcript)
     }
 
     /// Periodically transcribes the audio captured so far and shows it in the

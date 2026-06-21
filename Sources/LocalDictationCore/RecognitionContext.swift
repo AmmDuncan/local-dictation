@@ -1,12 +1,16 @@
 import Foundation
 
-/// Builds the whisper context prompt that biases recognition toward the user's
-/// own words — their custom vocabulary plus a rolling window of recent
-/// transcripts. Whisper leans toward terms it has "seen" in the prompt, so
-/// recurring names/jargon (and words you say often) are mis-heard less.
+/// Builds the whisper context prompt that biases recognition toward trustworthy,
+/// non-self-reinforcing sources: the user's custom vocabulary and the live caret/
+/// visible context. Whisper leans toward terms it has "seen" in the prompt, so
+/// recurring names/jargon are mis-heard less. The `history` argument exists for
+/// completeness but the app deliberately feeds none — biasing from raw past
+/// transcripts is a feedback loop (a bad transcript poisons the next), so curated
+/// vocabulary + current on-screen context (which can't accumulate pollution) are
+/// the only sources fed.
 ///
 /// Pure + bounded: whisper only uses a limited prompt context, so the result is
-/// capped — vocabulary first (most valuable), then the most recent history.
+/// capped — vocabulary first (most valuable), then the live context.
 public enum RecognitionContext {
     /// Default cap. Whisper's prompt context is ~224 tokens; ~600 characters
     /// stays comfortably inside it while leaving room for the audio.
@@ -15,7 +19,7 @@ public enum RecognitionContext {
     public static func prompt(
         vocabulary: String,
         defaults: [String] = [],
-        history: [String],
+        history: [String] = [],
         context: ContextBias.PromptContext? = nil,
         maxChars: Int = defaultMaxChars
     ) -> String {
@@ -98,22 +102,5 @@ public enum RecognitionContext {
         text.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init)
-    }
-
-    /// Append a new transcript to the rolling history, dropping the oldest beyond
-    /// `maxEntries`. Blank entries are ignored.
-    public static func appendingHistory(
-        _ transcript: String,
-        to history: [String],
-        maxEntries: Int = 12
-    ) -> [String] {
-        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return history }
-        var updated = history
-        updated.append(trimmed)
-        if updated.count > maxEntries {
-            updated.removeFirst(updated.count - maxEntries)
-        }
-        return updated
     }
 }

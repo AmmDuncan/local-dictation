@@ -14,7 +14,6 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.cleanUpTranscript) private var cleanUpTranscript = AppSettingsSnapshot.Defaults.cleanUpTranscript
     @AppStorage(AppSettingsKeys.polishWithAI) private var polishWithAI = AppSettingsSnapshot.Defaults.polishWithAI
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
-    @AppStorage(AppSettingsKeys.useHistoryContext) private var useHistoryContext = AppSettingsSnapshot.Defaults.useHistoryContext
     @AppStorage(AppSettingsKeys.useDefaultVocabulary) private var useDefaultVocabulary = AppSettingsSnapshot.Defaults.useDefaultVocabulary
     @AppStorage(AppSettingsKeys.useContextAwareness) private var useContextAwareness = AppSettingsSnapshot.Defaults.useContextAwareness
     @AppStorage(AppSettingsKeys.useScreenOCR) private var useScreenOCR = AppSettingsSnapshot.Defaults.useScreenOCR
@@ -60,7 +59,6 @@ struct SettingsView: View {
                 whisperExecutablePath: $whisperExecutablePath,
                 modelPath: $modelPath,
                 customVocabulary: $customVocabulary,
-                useHistoryContext: $useHistoryContext,
                 useDefaultVocabulary: $useDefaultVocabulary,
                 useContextAwareness: $useContextAwareness,
                 useScreenOCR: $useScreenOCR,

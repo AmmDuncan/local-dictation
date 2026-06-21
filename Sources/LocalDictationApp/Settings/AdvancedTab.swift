@@ -5,7 +5,6 @@ struct AdvancedTab: View {
     @Binding var whisperExecutablePath: String
     @Binding var modelPath: String
     @Binding var customVocabulary: String
-    @Binding var useHistoryContext: Bool
     @Binding var useDefaultVocabulary: Bool
     @Binding var useContextAwareness: Bool
     @Binding var useScreenOCR: Bool
@@ -28,8 +27,6 @@ struct AdvancedTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Toggle("Use recent transcripts as context", isOn: $useHistoryContext)
-                    .help("Bias recognition toward words from your recent dictations. All on-device.")
                 Toggle("Use built-in vocabulary", isOn: $useDefaultVocabulary)
                     .help("Bias toward common terms (Claude, GitHub, TypeScript, …) so they transcribe correctly without adding them yourself. Your own vocabulary always takes priority.")
                 Toggle("Use context around your cursor", isOn: $useContextAwareness)
