@@ -19,6 +19,14 @@ struct LearnTab: View {
 
     private var userRules: [TextReplacements.Rule] { TextReplacements.parse(textReplacements) }
 
+    /// Dictations worth surfacing in the queue — only those that got a correction,
+    /// newest first. Zero-change dictations stay in the log but aren't shown here.
+    private var reviewable: [CorrectionRecord] { CorrectionLog.pending(records) }
+
+    private func builtIns(_ source: Edit.Source) -> [BuiltInCorrections.Entry] {
+        BuiltInCorrections.all.filter { $0.source == source }
+    }
+
     var body: some View {
         Form {
             Section {
@@ -28,10 +36,19 @@ struct LearnTab: View {
             }
 
             Section("Recent dictations") {
-                if records.isEmpty {
-                    Text("No dictations logged yet.").foregroundStyle(.secondary)
+                if reviewable.isEmpty {
+                    Text("No corrections to review yet.").foregroundStyle(.secondary)
                 } else {
-                    ForEach(records) { recordRow($0) }
+                    // Bounded + scrolls internally so the log can't push the settings
+                    // below it off-screen, however many dictations pile up.
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(reviewable) { recordRow($0) }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                }
+                if !records.isEmpty {
                     Button("Clear all", role: .destructive) {
                         CorrectionLogStore.clear()
                         reload()
@@ -64,15 +81,27 @@ struct LearnTab: View {
             }
 
             Section {
-                ForEach(BuiltInCorrections.all) { entry in
+                ForEach(builtIns(.mishearing)) { entry in
                     Toggle(isOn: builtInBinding(entry)) {
                         ruleLabel(from: entry.from, to: entry.to)
                     }
                 }
             } header: {
-                Text("Built-in corrections")
+                Text("Mishearings")
             } footer: {
-                Text("Turn off any built-in swap you don't want.")
+                Text("Built-in fixes for commonly misheard words — applied everywhere. Turn off any you don't want.")
+            }
+
+            Section {
+                ForEach(builtIns(.command)) { entry in
+                    Toggle(isOn: builtInBinding(entry)) {
+                        ruleLabel(from: entry.from, to: entry.to)
+                    }
+                }
+            } header: {
+                Text("Command mode (terminal git)")
+            } footer: {
+                Text("Applied only inside a terminal when you're typing a git command — “main” is often misheard as “me”. Left alone everywhere else.")
             }
 
             Section {

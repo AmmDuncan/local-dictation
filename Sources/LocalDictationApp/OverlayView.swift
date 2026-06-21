@@ -2,65 +2,6 @@ import AppKit
 import Combine
 import SwiftUI
 
-// MARK: - Brand
-
-private extension Color {
-    init(hex: UInt, alpha: Double = 1) {
-        self.init(
-            .sRGB,
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255,
-            opacity: alpha
-        )
-    }
-}
-
-private enum Brand {
-    static let emerald = Color(hex: 0x2FD6A3)
-    static let teal = Color(hex: 0x0A7D63)
-    static let signal = LinearGradient(
-        colors: [Color(hex: 0x2FD6A3), Color(hex: 0x13B287), Color(hex: 0x0A7D63)],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-    )
-    static let error = LinearGradient(
-        colors: [Color(hex: 0xFF8A6B), Color(hex: 0xFF5D5D)],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-    )
-    static let onSignal = Color(hex: 0x06231B)
-}
-
-/// Real system blur behind the panel (picks up the live desktop + light/dark),
-/// masked to a rounded rect so the blur's own square corners don't show.
-private struct VisualEffectView: NSViewRepresentable {
-    var cornerRadius: CGFloat = 26
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.maskImage = Self.roundedMask(radius: cornerRadius)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.maskImage = Self.roundedMask(radius: cornerRadius)
-    }
-
-    private static func roundedMask(radius: CGFloat) -> NSImage {
-        let edge = radius * 2 + 1
-        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
-            NSColor.black.set()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
-        image.resizingMode = .stretch
-        return image
-    }
-}
-
 // MARK: - Overlay
 
 struct OverlayView: View {
@@ -69,7 +10,7 @@ struct OverlayView: View {
     @State private var breathe = false
 
     private var isDark: Bool { scheme == .dark }
-    private var ink: Color { isDark ? Color(hex: 0xF4F8F6) : Color(hex: 0x0E1A16) }
+    private var ink: Color { Brand.ink(scheme) }
     private var inkDim: Color { ink.opacity(0.62) }
     private var isError: Bool { state.phase == .error }
 
@@ -457,17 +398,5 @@ private struct IndeterminateBar: View {
                 offset = 1.2
             }
         }
-    }
-}
-
-private struct SignalButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Brand.onSignal)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background(Capsule().fill(Brand.signal))
-            .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }

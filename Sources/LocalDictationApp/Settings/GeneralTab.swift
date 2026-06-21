@@ -22,6 +22,8 @@ struct GeneralTab: View {
                 Section("Shortcut") {
                     KeyboardShortcuts.Recorder("Dictation key", name: .holdToDictate)
                         .help("⌃Space is the default. Note: macOS also uses ⌃Space to switch input sources — if you have more than one input source, pick a different key here.")
+                    KeyboardShortcuts.Recorder("Review last dictation", name: .reviewLastDictation)
+                        .help("Opens the review panel for your most recent dictation, where you can revert a correction or teach a fix. ⌃⌥Z by default — rebind it if it clashes with another app (e.g. a screenshot tool on ⌥Z).")
                     Picker("Activation", selection: $activationMode) {
                         Text("Hold to talk").tag(ActivationMode.hold.rawValue)
                         Text("Tap to start / stop").tag(ActivationMode.toggle.rawValue)

@@ -23,11 +23,7 @@ struct MenuBarView: View {
             }
 
             if !model.lastTranscript.isEmpty {
-                Text(model.lastTranscript)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
+                lastTranscriptPreview
             }
 
             Divider()
@@ -45,6 +41,33 @@ struct MenuBarView: View {
         .padding(16)
         .frame(width: 320, alignment: .leading)
         .onAppear { model.readiness.refresh() }
+    }
+
+    /// A tappable preview of the most recent dictation. Clicking opens Dictation
+    /// History (where it sits at the top with its own copy button) rather than
+    /// expanding selectable text inline, which clashed with the popup's controls.
+    private var lastTranscriptPreview: some View {
+        Button { openHistoryWindow() } label: {
+            HStack(alignment: .center, spacing: 6) {
+                Text(model.lastTranscript)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open in Dictation History")
+        .accessibilityHint("Opens Dictation History")
     }
 
     private var header: some View {

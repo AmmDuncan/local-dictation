@@ -1,11 +1,12 @@
 import LocalDictationCore
 import SwiftUI
 
-/// The shared review + teach surface. Shows a dictation in context with its swaps
-/// flat-underlined; select a span (tap a word, tap another to extend) to revert a
-/// swap or teach a correction. Reachable from the Learn tab (here) and the Door #1
-/// hotkey (P4). Writes through `RuleDerivation` to the same stores the apply path
-/// consults: `textReplacements` (teach), `rejectedBuiltInSwaps` (revert built-ins),
+/// The shared review + teach surface, rendered in the dictation brand language
+/// (glass card, emerald accent, flat underlines) so it reads as one app with the
+/// overlay HUD. Shows the dictation in context with its swaps flat-underlined and
+/// listed as removable change chips; tap a word (or adjacent words) to teach a fix.
+/// Writes through `RuleDerivation` to the same stores the apply path consults:
+/// `textReplacements` (teach), `rejectedBuiltInSwaps` (revert built-ins),
 /// `customVocabulary` (also-bias).
 struct ReviewPanel: View {
     let record: CorrectionRecord
@@ -13,61 +14,284 @@ struct ReviewPanel: View {
     /// Provided only by the Door #1 floating panel: re-insert the corrected full text
     /// into the still-focused field (experimental). Nil from the Learn-tab sheet.
     var onReinsert: ((String) -> Void)?
+    /// Lets the host panel resize to the card's natural height as the sentence
+    /// measurement and selection state settle. No-op for the Learn-tab sheet.
+    var onSizeChange: (CGSize) -> Void = { _ in }
+    /// Render the sentence at its natural height with no scroll wrapper — set by the
+    /// off-screen `ImageRenderer` design-shot path, which can't render a `ScrollView`.
+    var staticHeight = false
+    /// Seeds a selection for the design-shot path (so the editor state can be
+    /// rendered off-screen, where gestures don't run). Nil in normal use.
+    var previewSelectedRange: ClosedRange<Int>?
 
     @AppStorage(AppSettingsKeys.textReplacements) private var textReplacements = AppSettingsSnapshot.Defaults.textReplacements
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
     @AppStorage(AppSettingsKeys.liveReinsertionEnabled) private var liveReinsertionEnabled = AppSettingsSnapshot.Defaults.liveReinsertionEnabled
 
+    @Environment(\.colorScheme) private var scheme
+
     @State private var anchor: Int?
     @State private var head: Int?
     @State private var editValue = ""
     @State private var alsoBias = false
-
-    private static let emerald = Color(red: 0.18, green: 0.84, blue: 0.64)
+    /// Transient "✓ Learned X → Y" confirmation after an apply, so saving a fix —
+    /// especially from a past (history) dictation, where it only teaches forward and
+    /// rewrites nothing on screen — isn't silent.
+    @State private var savedNote: String?
+    /// Indices into `swaps` the user has reverted this session — drops the chip and
+    /// updates the count without mutating the persisted record.
+    @State private var reverted: Set<Int> = []
+    /// Natural height of the sentence content, measured so the box can cap + scroll.
+    @State private var sentenceHeight: CGFloat = 0
+    private let sentenceMaxHeight: CGFloat = 184
 
     private var displayText: String { record.prePolish }
     private var swaps: [Edit] { record.segmentA }
 
+    private var ink: Color { Brand.ink(scheme) }
+    private var inkDim: Color { ink.opacity(0.6) }
+    private var isDark: Bool { scheme == .dark }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Review this dictation").font(.headline)
-                Text("Tap a word — tap another to extend — then fix it.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            FlowLayout(spacing: 6) {
-                ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
-                    tokenView(index: index, text: token.text)
+        card
+            .padding(20)
+            .frame(width: 480)
+            .background(halo)
+            // Report the card's intrinsic size so the host panel can match it
+            // (the card drives the panel, never the reverse — avoids a fill loop).
+            .background(
+                GeometryReader { geo in
+                    Color.clear.onChange(of: geo.size, initial: true) { _, size in onSizeChange(size) }
                 }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
+            )
+            // Escape closes the panel (Return is bound to Done).
+            .overlay(
+                Button("", action: onClose).keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
+            )
+    }
 
-            if selectedRange != nil {
-                editor
-            } else {
-                Text("No selection. Tap a highlighted word to revert it, or any word to teach a fix.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            sentenceCard
+            detailRegion
+            footer
+        }
+        .padding(24)
+        .background(glass)
+        .overlay(alignment: .top) {
+            Capsule().fill(Brand.signal).frame(height: 3).padding(.horizontal, 1)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.07))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.45), radius: 22, y: 12)
+    }
 
-            Spacer(minLength: 0)
-            HStack {
-                Spacer()
-                Button("Done", action: onClose).keyboardShortcut(.defaultAction)
+    private var glass: some View {
+        ZStack {
+            VisualEffectView(cornerRadius: 24)
+            LinearGradient(
+                colors: isDark
+                    ? [Color(hex: 0x1E262A, alpha: 0.74), Color(hex: 0x0E1316, alpha: 0.86)]
+                    : [Color.white.opacity(0.90), Color.white.opacity(0.84)],
+                startPoint: .top, endPoint: .bottom
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var halo: some View {
+        RoundedRectangle(cornerRadius: 30, style: .continuous)
+            .fill(
+                RadialGradient(
+                    colors: [Brand.emerald.opacity(0.18), Brand.teal.opacity(0.05), .clear],
+                    center: .init(x: 0.5, y: 0.10), startRadius: 4, endRadius: 170
+                )
+            )
+            .blur(radius: 34)
+            .opacity(0.55)
+    }
+
+    // MARK: header
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Brand.signal)
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(Brand.onSignal)
+                )
+                .shadow(color: Brand.emerald.opacity(0.5), radius: 10, y: 3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Review this dictation")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(ink)
+                Text("Here's what I typed — corrections highlighted.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(inkDim)
+            }
+            Spacer(minLength: 8)
+        }
+    }
+
+    // MARK: sentence
+
+    /// The dictated sentence as tappable word tokens. Tight inter-word spacing reads
+    /// as prose; `lineSpacing` gives leading without widening the gaps between words.
+    private var sentenceFlow: some View {
+        FlowLayout(spacing: 1, lineSpacing: 6) {
+            ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
+                tokenView(index: index, text: token.text)
             }
         }
-        .padding(20)
-        .frame(width: 460, height: 380)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var sentenceCard: some View {
+        Group {
+            if staticHeight {
+                sentenceFlow
+            } else {
+                // Hug the content until it exceeds the cap, then fix the height + scroll
+                // so a long dictation can't grow the panel off-screen.
+                ScrollView(.vertical, showsIndicators: true) {
+                    sentenceFlow.background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: SentenceHeightKey.self, value: geo.size.height)
+                        }
+                    )
+                }
+                .frame(height: sentenceScrolls ? sentenceMaxHeight : nil)
+                .fixedSize(horizontal: false, vertical: !sentenceScrolls)
+                .onPreferenceChange(SentenceHeightKey.self) { sentenceHeight = $0 }
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 14).fill(ink.opacity(isDark ? 0.06 : 0.04)))
+    }
+
+    private var sentenceScrolls: Bool { sentenceHeight > sentenceMaxHeight }
+
+    @ViewBuilder
+    private func tokenView(index: Int, text: String) -> some View {
+        let isSwap = activeSwap(forTokenAt: index) != nil
+        let isSelected = selectedRange.map { $0.contains(index) } ?? false
+        Text(text)
+            .font(.system(size: 16))
+            .foregroundStyle(isSwap ? Brand.emerald : ink)
+            // Flat (non-rounded) underline on swapped words.
+            .overlay(alignment: .bottom) {
+                if isSwap { Rectangle().fill(Brand.emerald).frame(height: 1.5).offset(y: 1) }
+            }
+            .padding(.horizontal, 2).padding(.vertical, 1.5)
+            .background(RoundedRectangle(cornerRadius: 4).fill(isSelected ? Brand.emerald.opacity(0.28) : .clear))
+            .contentShape(Rectangle())
+            .onTapGesture { tap(index) }
+    }
+
+    // MARK: detail region (editor · changes · hint)
+
+    @ViewBuilder
+    private var detailRegion: some View {
+        if selectedRange != nil {
+            editor
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                if let savedNote {
+                    Label(savedNote, systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Brand.emerald)
+                }
+                if !visibleChanges.isEmpty {
+                    changesSection
+                } else if savedNote == nil {
+                    Text("No corrections — tap any word to teach a fix.")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(inkDim)
+                }
+            }
+        }
+    }
+
+    /// Swaps not yet reverted in this session, paired with their `swaps` index.
+    private var visibleChanges: [(index: Int, edit: Edit)] {
+        swaps.enumerated().compactMap { reverted.contains($0.offset) ? nil : (index: $0.offset, edit: $0.element) }
+    }
+
+    private var changesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(changesLabel)
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(1.2)
+                .foregroundStyle(inkDim)
+            ForEach(visibleChanges, id: \.index) { change in
+                changeChip(index: change.index, edit: change.edit)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var changesLabel: String {
+        let n = visibleChanges.count
+        return "\(n) CHANGE\(n == 1 ? "" : "S") — REMOVE ANY TO REVERT"
+    }
+
+    private func changeChip(index: Int, edit: Edit) -> some View {
+        HStack(spacing: 9) {
+            Text("HEARD")
+                .font(.system(size: 9.5, weight: .bold)).tracking(0.5)
+                .foregroundStyle(inkDim)
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Capsule().fill(ink.opacity(0.10)))
+            Text(edit.from).strikethrough().foregroundStyle(inkDim)
+            Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold)).foregroundStyle(inkDim)
+            Text(edit.to).fontWeight(.semibold).foregroundStyle(Brand.emerald)
+            Button { revertChange(index: index, edit: edit) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(inkDim)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(ink.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .help("Revert this change")
+        }
+        .font(.system(size: 13))
+        .padding(.leading, 10).padding(.trailing, 6).padding(.vertical, 6)
+        .background(Capsule().fill(Brand.emerald.opacity(0.10)))
+        .overlay(Capsule().strokeBorder(Brand.emerald.opacity(0.30)))
+    }
+
+    // MARK: footer
+
+    private var footer: some View {
+        HStack {
+            Spacer()
+            Button("Done", action: onClose)
+                .buttonStyle(.plain)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(inkDim)
+                .keyboardShortcut(.defaultAction)
+        }
     }
 
     // MARK: tokens
 
+    // Compiled once, not per redraw (the view's `body`/helpers read `tokens` often).
+    private static let tokenRegex = try? NSRegularExpression(pattern: "\\S+")
+
     private var tokens: [(text: String, range: NSRange)] {
         let ns = displayText as NSString
-        guard let regex = try? NSRegularExpression(pattern: "\\S+") else { return [] }
+        guard let regex = Self.tokenRegex else { return [] }
         return regex.matches(in: displayText, range: NSRange(location: 0, length: ns.length))
             .map { (ns.substring(with: $0.range), $0.range) }
     }
@@ -78,37 +302,31 @@ struct ReviewPanel: View {
         return swaps.first { NSIntersectionRange($0.range, r).length > 0 }
     }
 
-    @ViewBuilder
-    private func tokenView(index: Int, text: String) -> some View {
-        let isSwap = swap(forTokenAt: index) != nil
-        let isSelected = selectedRange.map { $0.contains(index) } ?? false
-        Text(text)
-            .foregroundStyle(isSwap ? Self.emerald : Color.primary)
-            // Flat (non-rounded) underline on swapped words.
-            .overlay(alignment: .bottom) {
-                if isSwap { Rectangle().fill(Self.emerald).frame(height: 1.5).offset(y: 2) }
-            }
-            .padding(.horizontal, 3).padding(.vertical, 1)
-            .background(RoundedRectangle(cornerRadius: 4).fill(isSelected ? Self.emerald.opacity(0.28) : .clear))
-            .contentShape(Rectangle())
-            .onTapGesture { tap(index) }
+    /// Like `swap(forTokenAt:)` but nil once that swap has been reverted — so the
+    /// underline disappears from the sentence in step with the chip.
+    private func activeSwap(forTokenAt index: Int) -> Edit? {
+        guard index < tokens.count else { return nil }
+        let r = tokens[index].range
+        for (offset, edit) in swaps.enumerated() where !reverted.contains(offset) {
+            if NSIntersectionRange(edit.range, r).length > 0 { return edit }
+        }
+        return nil
     }
 
     // MARK: selection
 
     private var selectedRange: ClosedRange<Int>? {
-        guard let a = anchor, let h = head else { return nil }
+        guard let a = anchor, let h = head else { return previewSelectedRange }
         return min(a, h)...max(a, h)
     }
 
+    /// Tap to build a contiguous selection — see `SpanSelection.tap` for the grow /
+    /// shrink / toggle / adjacent / separated rules (factored out + unit-tested).
     private func tap(_ index: Int) {
-        if anchor == index, head == index {
-            anchor = nil; head = nil  // tapping the lone selected word clears it
-        } else if let a = anchor, head == a {
-            head = index  // extend from the single anchor to a span
-        } else {
-            anchor = index; head = index  // start a fresh single selection
-        }
+        savedNote = nil
+        let next = SpanSelection.tap(current: selectedRange, index: index)
+        anchor = next?.lowerBound
+        head = next?.upperBound
         resetEditor()
     }
 
@@ -116,9 +334,9 @@ struct ReviewPanel: View {
         alsoBias = false
         guard let range = selectedRange else { editValue = ""; return }
         if let edit = singleSwap(in: range) {
-            editValue = edit.to  // pre-fill a change with the current value
+            editValue = edit.to  // pre-fill a change with the current value to tweak
         } else {
-            editValue = selectedText(range)  // teach starts from what was heard
+            editValue = ""  // teach: empty so the placeholder prompts for the correction
         }
     }
 
@@ -146,43 +364,54 @@ struct ReviewPanel: View {
     private var editor: some View {
         if let range = selectedRange {
             VStack(alignment: .leading, spacing: 10) {
-                if let edit = singleSwap(in: range) {
-                    Text("Heard “\(edit.from)” → typed “\(edit.to)”").font(.callout)
-                    HStack {
-                        Button("Revert to “\(edit.from)”") { applyRevert(edit) }
-                        Spacer()
-                    }
-                    HStack {
-                        TextField("change to", text: $editValue)
-                        Button("Save") { applyChange(edit, to: editValue) }
-                            .disabled(trimmed(editValue).isEmpty)
-                    }
-                } else {
-                    Text("Teach a fix for “\(selectedText(range))”").font(.callout)
-                    HStack {
-                        TextField("correction", text: $editValue)
-                        Button("Teach") {
-                            applyTeach(heard: selectedText(range), correction: editValue, span: unionRange(range))
-                        }
+                Text("Correct “\(selectedText(range))” to:")
+                    .font(.system(size: 13)).foregroundStyle(ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    TextField(range.count > 1 ? "the right words" : "the right word", text: $editValue)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Save") { applyEditor(range) }
+                        .buttonStyle(SignalButtonStyle())
                         .disabled(trimmed(editValue).isEmpty)
-                    }
                 }
                 Toggle("Also bias recognition toward this word", isOn: $alsoBias)
-                    .font(.caption)
+                    .font(.system(size: 12))
+                    .tint(Brand.emerald)
+                Text(liveReinsertionEnabled
+                     ? "Fixes the current text and future dictations."
+                     : "Applies to your next dictations (turn on live re-insertion in the Learn tab to also fix the text you just typed).")
+                    .font(.system(size: 11)).foregroundStyle(inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Self.emerald.opacity(0.4)))
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Brand.emerald.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Brand.emerald.opacity(0.38)))
         }
     }
 
     // MARK: apply
 
-    private func applyRevert(_ edit: Edit) {
+    /// Revert a built-in swap from its change chip's × button: suppress it for next
+    /// time, re-insert the original if live re-insertion is on, and drop the chip.
+    private func revertChange(index: Int, edit: Edit) {
         if let id = RuleDerivation.suppressionIdentity(for: edit) {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
         maybeReinsert(span: edit.range, expecting: edit.to, replacement: edit.from)
+        reverted.insert(index)
         clearSelection()
+        savedNote = "Reverted “\(edit.from)” → “\(edit.to)”"
+    }
+
+    /// Apply the editor for the selected span: re-point a built-in swap to the user's
+    /// value, or teach a fix for a plain span. Both re-insert into the current field
+    /// when live re-insertion is on (see `maybeReinsert`).
+    private func applyEditor(_ range: ClosedRange<Int>) {
+        if let edit = singleSwap(in: range) {
+            applyChange(edit, to: editValue)
+        } else {
+            applyTeach(heard: selectedText(range), correction: editValue, span: unionRange(range))
+        }
     }
 
     private func applyChange(_ edit: Edit, to newValue: String) {
@@ -193,12 +422,14 @@ struct ReviewPanel: View {
         appendTeach(heard: edit.from, correction: newValue)
         maybeReinsert(span: edit.range, expecting: edit.to, replacement: trimmed(newValue))
         clearSelection()
+        savedNote = "Learned “\(edit.from)” → “\(trimmed(newValue))”"
     }
 
     private func applyTeach(heard: String, correction: String, span: NSRange) {
         appendTeach(heard: heard, correction: correction)
         maybeReinsert(span: span, expecting: heard, replacement: trimmed(correction))
         clearSelection()
+        savedNote = "Learned “\(heard)” → “\(trimmed(correction))”"
     }
 
     /// Experimental: re-insert the corrected full text into the current field, but
@@ -230,4 +461,10 @@ struct ReviewPanel: View {
     }
 
     private func trimmed(_ s: String) -> String { s.trimmingCharacters(in: .whitespaces) }
+}
+
+/// Reports the sentence content's natural height so the box can cap it and scroll.
+private struct SentenceHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }

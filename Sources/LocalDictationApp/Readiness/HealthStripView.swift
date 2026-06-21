@@ -77,6 +77,11 @@ struct HealthStripView: View {
 /// so the readiness pills flow instead of one pill breaking its text mid-word.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
+    /// Vertical gap between wrapped rows. Defaults to `spacing` (square gaps); set it
+    /// to give prose-like leading without widening the gap between words on a line.
+    var lineSpacing: CGFloat?
+
+    private var rowGap: CGFloat { lineSpacing ?? spacing }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
@@ -87,7 +92,7 @@ struct FlowLayout: Layout {
             let size = subview.sizeThatFits(.unspecified)
             if x > 0, x + size.width > maxWidth {
                 x = 0
-                y += rowHeight + spacing
+                y += rowHeight + rowGap
                 rowHeight = 0
             }
             x += size.width + spacing
@@ -104,7 +109,7 @@ struct FlowLayout: Layout {
             let size = subview.sizeThatFits(.unspecified)
             if x > bounds.minX, x + size.width > bounds.maxX {
                 x = bounds.minX
-                y += rowHeight + spacing
+                y += rowHeight + rowGap
                 rowHeight = 0
             }
             subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))

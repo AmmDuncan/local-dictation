@@ -61,6 +61,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("BuiltInCorrections: stable identities match revert convention", testBuiltInCorrections)
         await suite.run("Apply path consults the suppression set", testSuppressionConsult)
         await suite.run("Reinsertion decision: exact-match replace, else abort", testReinsertionDecision)
+        await suite.run("Span selection: grow/shrink/toggle/adjacent/separated", testSpanSelection)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
@@ -107,6 +108,24 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) thr
     if !condition() {
         throw AssertionFailure(description: message)
     }
+}
+
+private func testSpanSelection() throws {
+    typealias S = SpanSelection
+    // First tap selects a single word; tapping it again clears it.
+    try expect(S.tap(current: nil, index: 2) == 2...2, "nil + tap 2 → 2…2")
+    try expect(S.tap(current: 2...2, index: 2) == nil, "lone selected word tapped → clear")
+    // Adjacent words grow the span; a separated word starts fresh.
+    try expect(S.tap(current: 2...2, index: 3) == 2...3, "adjacent right → grow")
+    try expect(S.tap(current: 2...3, index: 1) == 1...3, "adjacent left → grow")
+    try expect(S.tap(current: 2...2, index: 5) == 5...5, "separated → fresh single")
+    // Tapping a selected word toggles it off (shrink from the tapped end).
+    try expect(S.tap(current: 2...3, index: 3) == 2...2, "tap end of 2-span → drop last")
+    try expect(S.tap(current: 2...3, index: 2) == 3...3, "tap start of 2-span → drop first")
+    try expect(S.tap(current: 0...2, index: 0) == 1...2, "tap start of 3-span → drop first")
+    try expect(S.tap(current: 0...2, index: 2) == 0...1, "tap end of 3-span → drop last")
+    // A middle tap collapses the selection to that single word.
+    try expect(S.tap(current: 0...2, index: 1) == 1...1, "tap middle → collapse to word")
 }
 
 private func testWhisperParserPrefersSidecarTranscript() throws {

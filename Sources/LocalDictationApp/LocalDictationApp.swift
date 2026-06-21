@@ -119,6 +119,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Diagnostic (release-available, env-gated): render the review panel to a PNG
+        // off-screen for design review — no live window or screen-capture needed.
+        if let path = ProcessInfo.processInfo.environment["LD_PANEL_SHOT"] {
+            renderReviewPanelShot(to: path)
+            return
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["LD_METER_TEST"] != nil {
             runMeterTest()
@@ -163,6 +170,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installSignalControls()
+    }
+
+    /// Render `ReviewPanel` to a PNG off-screen (env `LD_PANEL_SHOT=<path>`) with a
+    /// representative two-correction record, drawn over a dark page via `ImageRenderer`.
+    /// Lets the panel design be reviewed as an image without a live capture, then exits.
+    @MainActor
+    private func renderReviewPanelShot(to path: String) {
+        let sentence = "Ask Claude to refactor it, then push to main when the tests pass."
+        let ns = sentence as NSString
+        let record = CorrectionRecord(
+            raw: "ask clot to refactor it then push to me when the tests pass",
+            prePolish: sentence,
+            inserted: sentence,
+            segmentA: [
+                Edit(range: ns.range(of: "Claude"), from: "clot", to: "Claude", source: .mishearing),
+                Edit(range: ns.range(of: "main"), from: "me", to: "main", source: .command)
+            ],
+            segmentB: []
+        )
+        // Resting state, then the editor state (a multi-word selection) so both can
+        // be reviewed off-screen.
+        writePanelPNG(ReviewPanel(record: record, onClose: {}, onReinsert: nil, staticHeight: true), to: path)
+        writePanelPNG(
+            ReviewPanel(record: record, onClose: {}, onReinsert: nil, staticHeight: true, previewSelectedRange: 10...11),
+            to: path.replacingOccurrences(of: ".png", with: "-editor.png")
+        )
+        exit(0)
+    }
+
+    @MainActor
+    private func writePanelPNG(_ panel: ReviewPanel, to path: String) {
+        let view = panel
+            .padding(40)
+            .background(Color(red: 0.04, green: 0.06, blue: 0.08))
+            .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        if let image = renderer.nsImage,
+           let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     /// Diagnostic (env LD_CONTEXT_PROBE=<file>): lets the context pipeline be
@@ -392,5 +442,7 @@ extension KeyboardShortcuts.Name {
     /// Opens the review panel for the last dictation (Door #1). Pressing it while
     /// the "Typed" card is up — or any time after — reviews the most recent result.
     @MainActor
-    static let reviewLastDictation = Self("reviewLastDictation", default: .init(.z, modifiers: [.option]))
+    // ⌃⌥Z, not the bare ⌥Z (clashes with CleanShot's screenshot hotkey) or ⌃Z
+    // (terminal SIGTSTP). User-configurable via the General tab recorder.
+    static let reviewLastDictation = Self("reviewLastDictation", default: .init(.z, modifiers: [.option, .control]))
 }
