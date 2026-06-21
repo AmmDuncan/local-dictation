@@ -53,11 +53,19 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     /// buffer — usually the trailing syllable of the final word — flushes before
     /// teardown. Small enough to stay within the push-to-talk latency budget.
     private static let trailingCaptureMillis = 250
+    /// Cap on how long `startRecording` waits for the mic to begin delivering
+    /// audio before proceeding anyway, so a silent/broken input never hangs the
+    /// start. Cold first-of-day warmup is normally well under this.
+    private static let firstAudioTimeoutMillis = 1500
     private var converter: AVAudioConverter?
     private let lock = NSLock()
     private var samples: [Float] = []
     private var _isCapturing = false
     private var _currentLevel: Double = 0
+    /// Set true (under `lock`) once the tap delivers its first buffer after a
+    /// start. Lets `startRecording` hold "ready" until the mic is actually live.
+    private var _sawFirstAudio = false
+    private var firstAudioWaiter: CheckedContinuation<Void, Never>?
 
     /// Most recent normalized mic level (0…1), updated on the audio thread.
     var currentLevel: Double {
@@ -82,6 +90,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         }
 
         clearSamples()
+        resetFirstAudioState()
 
         // Fresh engine each time so it binds to the current default input and
         // follows route changes (e.g. headphones plugged in since last use).
@@ -104,6 +113,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
 
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.appendConverted(buffer)
+            self?.noteFirstAudio()
         }
 
         engine.prepare()
@@ -114,6 +124,62 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
             throw AudioRecordingError.couldNotStart
         }
         setCapturing(true)
+        // Don't report "started" until the mic is actually delivering audio. On a
+        // cold first-of-day start the input hardware + CoreAudio chain take a beat
+        // to warm up, and audio spoken in that gap is lost — so the caller only
+        // shows "Listening" (the cue to speak) once this returns.
+        await awaitFirstAudio()
+    }
+
+    /// Clear the first-audio gate before a new recording. Synchronous so the lock
+    /// is never held across a suspension point (Swift 6 forbids that).
+    private func resetFirstAudioState() {
+        lock.lock(); _sawFirstAudio = false; firstAudioWaiter = nil; lock.unlock()
+    }
+
+    /// Signal — once — that the mic is now delivering audio, resuming a pending
+    /// `awaitFirstAudio`. Called from the audio thread on every buffer; a cheap
+    /// no-op after the first.
+    private func noteFirstAudio() {
+        lock.lock()
+        if _sawFirstAudio { lock.unlock(); return }
+        _sawFirstAudio = true
+        let waiter = firstAudioWaiter
+        firstAudioWaiter = nil
+        lock.unlock()
+        waiter?.resume()
+    }
+
+    /// Suspend until the mic delivers its first buffer or `firstAudioTimeoutMillis`
+    /// elapses — whichever comes first — so a cold-start warmup gap can't clip the
+    /// first words and a dead mic can't hang the start.
+    private func awaitFirstAudio() async {
+        let timeout = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.firstAudioTimeoutMillis))
+            self?.resumeFirstAudioWaiter()
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if _sawFirstAudio {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                firstAudioWaiter = continuation
+                lock.unlock()
+            }
+        }
+        timeout.cancel()
+    }
+
+    /// Timeout fallback: resume a pending `awaitFirstAudio` without marking real
+    /// audio as seen. Whoever takes the continuation first (this or noteFirstAudio)
+    /// nils it, so the other becomes a no-op — never a double resume.
+    private func resumeFirstAudioWaiter() {
+        lock.lock()
+        let waiter = firstAudioWaiter
+        firstAudioWaiter = nil
+        lock.unlock()
+        waiter?.resume()
     }
 
     func stopRecording() async throws -> URL {

@@ -232,11 +232,6 @@ final class AppModel {
         self.workflow = workflow
 
         do {
-            if settings.showOverlay {
-                overlayController.showListening(detail: "") { [weak self] in
-                    self?.recorder?.currentLevel ?? 0
-                }
-            }
             try await workflow.beginRecording()
         } catch {
             isStarting = false
@@ -245,6 +240,16 @@ final class AppModel {
             if settings.showOverlay { overlayController.hide(after: 0) }
             fail(userFacingMessage(for: error))
             return
+        }
+
+        // beginRecording returns only once the mic is actually delivering audio
+        // (it waits out the cold-start warmup), so "Listening" — the cue to speak —
+        // appears only when audio is flowing. That's what keeps the first words
+        // from being clipped on a cold first-of-day dictation.
+        if settings.showOverlay {
+            overlayController.showListening(detail: "") { [weak self] in
+                self?.recorder?.currentLevel ?? 0
+            }
         }
 
         // Recording is live — only now is it safe to honor end/cancel.
