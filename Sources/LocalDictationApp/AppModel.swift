@@ -340,6 +340,17 @@ final class AppModel {
             status = transcript.isEmpty ? "Idle" : "Inserted"
             errorMessage = nil
             if !transcript.isEmpty { recordHistory(transcript) }
+            // Log this dictation + its attributed edits for the Learn-tab review
+            // queue (text only; gated on the privacy-respecting logCorrections toggle).
+            if settings.logCorrections, !transcript.isEmpty, let edits = workflow.lastTranscriptAndEdits {
+                CorrectionLogStore.append(CorrectionRecord(
+                    raw: edits.raw,
+                    prePolish: edits.prePolish,
+                    inserted: edits.final,
+                    segmentA: edits.segmentA,
+                    segmentB: edits.segmentB
+                ))
+            }
 
             if settings.showOverlay {
                 if transcript.isEmpty {

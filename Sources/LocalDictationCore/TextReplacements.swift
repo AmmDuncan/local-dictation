@@ -84,6 +84,14 @@ public enum TextReplacements {
         apply(parse(list), to: text)
     }
 
+    /// Serialize rules back to the newline `trigger => replacement` format that
+    /// `parse` reads. Used by the Learn tab's structured-row editor to write changes
+    /// back to the stored string. (Comments aren't preserved — structured editing
+    /// owns the list; raw editing stays in Advanced.)
+    public static func serialize(_ rules: [Rule]) -> String {
+        rules.map { "\($0.pattern) => \($0.replacement)" }.joined(separator: "\n")
+    }
+
     private static func isWordEdge(_ c: Character) -> Bool {
         c.isLetter || c.isNumber || c == "_"
     }

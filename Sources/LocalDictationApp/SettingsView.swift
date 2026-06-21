@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum SettingsTab: Hashable {
-    case general, models, audio, advanced
+    case general, models, audio, advanced, learn
 }
 
 struct SettingsView: View {
@@ -23,6 +23,8 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.smartSpacing) private var smartSpacing = AppSettingsSnapshot.Defaults.smartSpacing
     @AppStorage(AppSettingsKeys.useTextReplacements) private var useTextReplacements = AppSettingsSnapshot.Defaults.useTextReplacements
     @AppStorage(AppSettingsKeys.textReplacements) private var textReplacements = AppSettingsSnapshot.Defaults.textReplacements
+    @AppStorage(AppSettingsKeys.logCorrections) private var logCorrections = AppSettingsSnapshot.Defaults.logCorrections
+    @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
 
     @State private var readiness = ReadinessModel()
     @State private var store = ModelStore()
@@ -69,6 +71,14 @@ struct SettingsView: View {
             )
             .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
             .tag(SettingsTab.advanced)
+
+            LearnTab(
+                logCorrections: $logCorrections,
+                textReplacements: $textReplacements,
+                rejectedBuiltInSwaps: $rejectedBuiltInSwaps
+            )
+            .tabItem { Label("Learn", systemImage: "brain") }
+            .tag(SettingsTab.learn)
         }
         .frame(width: 560, height: 580)
         .onAppear(perform: refresh)

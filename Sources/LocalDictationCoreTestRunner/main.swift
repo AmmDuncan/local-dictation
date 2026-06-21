@@ -57,6 +57,8 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Command mode tracked: me->main + formatting edits, gated", testCommandModeEditTracking)
         await suite.run("EditFold.combine folds chained passes into final space", testEditFoldCombine)
         await suite.run("RuleDerivation: revert identity + teach rule", testRuleDerivation)
+        await suite.run("CorrectionLog: changeCount, codable, cap, pending", testCorrectionLog)
+        await suite.run("BuiltInCorrections: stable identities match revert convention", testBuiltInCorrections)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
@@ -1012,6 +1014,8 @@ private func testTextReplacements() throws {
         "phrase trigger expands"
     )
     try expect(TextReplacements.apply(rules, to: "theory") == "theory", "must not replace inside a word")
+    // serialize round-trips through parse (the Learn-tab structured editor relies on this).
+    try expect(TextReplacements.parse(TextReplacements.serialize(rules)) == rules, "serialize -> parse round-trips")
 }
 
 private func testSuppressionSet() throws {
@@ -1149,6 +1153,57 @@ private func testRuleDerivation() throws {
     try expect(rule?.pattern == "vad" && rule?.replacement == "VAD", "teach builds heard->correction rule")
     try expect(RuleDerivation.teach(heard: "vad", correction: "  ") == nil, "blank correction -> nil")
     try expect(RuleDerivation.teach(heard: "the", correction: "the") == nil, "no-op correction -> nil")
+}
+
+private func testCorrectionLog() throws {
+    let edit = Edit(location: 4, length: 6, from: "clot", to: "Claude", source: .mishearing)
+    let rec = CorrectionRecord(
+        raw: "ask clot", prePolish: "ask Claude", inserted: "ask Claude",
+        segmentA: [edit], segmentB: [], date: Date(timeIntervalSince1970: 100)
+    )
+    try expect(rec.changeCount == 1, "changeCount = segmentA + segmentB, got \(rec.changeCount)")
+
+    // Codable round-trip preserves the attributed edits.
+    let data = try JSONEncoder().encode(rec)
+    let back = try JSONDecoder().decode(CorrectionRecord.self, from: data)
+    try expect(back == rec, "record round-trips through JSON")
+    try expect(back.segmentA.first?.to == "Claude", "edit survives encode/decode")
+
+    // append caps at maxEntries, dropping the oldest.
+    var records: [CorrectionRecord] = []
+    for i in 0..<205 {
+        let r = CorrectionRecord(
+            raw: "r\(i)", prePolish: "r\(i)", inserted: "r\(i)",
+            segmentA: [], segmentB: [], date: Date(timeIntervalSince1970: Double(i))
+        )
+        records = CorrectionLog.appending(r, to: records)
+    }
+    try expect(records.count == 200, "capped at 200, got \(records.count)")
+    try expect(records.first?.raw == "r5", "oldest dropped, got \(records.first?.raw ?? "nil")")
+
+    // pending = records with a change, newest first.
+    let changed = CorrectionRecord(
+        raw: "x", prePolish: "y", inserted: "y", segmentA: [edit], segmentB: [],
+        date: Date(timeIntervalSince1970: 9999)
+    )
+    let pending = CorrectionLog.pending(CorrectionLog.appending(changed, to: records))
+    try expect(pending.first?.raw == "x", "pending newest-first, got \(pending.first?.raw ?? "nil")")
+    try expect(pending.allSatisfy { $0.changeCount > 0 }, "pending holds only changed records")
+}
+
+private func testBuiltInCorrections() throws {
+    let all = BuiltInCorrections.all
+    try expect(all.contains { $0.identity == "mishearing:clot→Claude" }, "clot built-in present")
+    try expect(all.contains { $0.from == "cloud code" && $0.to == "Claude Code" }, "cloud code present")
+    try expect(all.contains { $0.identity == "command:me→main" && $0.source == .command }, "me->main present")
+    try expect(all.allSatisfy { !$0.identity.isEmpty }, "every built-in has a stable identity")
+    // The list's identity must equal what a reverted edit produces, so a built-in
+    // toggled off in the Learn tab actually matches at apply time.
+    let me = Edit(location: 0, length: 4, from: "Me", to: "main", source: .command)
+    try expect(
+        all.contains { $0.identity == RuleDerivation.suppressionIdentity(for: me) },
+        "built-in identity matches the revert/suppression convention"
+    )
 }
 
 private func testInsertionFormatter() throws {
