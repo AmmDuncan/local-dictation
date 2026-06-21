@@ -32,6 +32,22 @@ final class AppModel {
     /// user's own words (fewer mishearings). See RecognitionContext.
     private var history: [String] = UserDefaults.standard.stringArray(forKey: "dictationHistory") ?? []
 
+    /// Gathers on-device context (frontmost app + caret text) when context
+    /// awareness is on. AX-only, transient — see AccessibilityContextProvider.
+    private let contextProvider: ContextProvider = AccessibilityContextProvider()
+
+    /// Cached OCR text per focused app, so the slow Vision OCR never blocks the
+    /// mic: the async refresh fills this, and the NEXT dictation in that app reads
+    /// it. Transient (in-memory only). See enrichWithOCR.
+    private var ocrCache: (app: String, text: String, at: Date)?
+    private var ocrTask: Task<Void, Never>?
+    /// AX window text shorter than this counts as "nothing usable" → OCR may fill in.
+    private static let minVisibleTextChars = 24
+    /// A cached OCR result stays usable this long; refreshes are throttled to at
+    /// most one per this gap so a burst of dictations doesn't re-capture each time.
+    private static let ocrCacheTTL: TimeInterval = 30
+    private static let ocrRefreshThrottle: TimeInterval = 6
+
     private enum PendingEnd { case none, finish, cancel }
 
     init() {
@@ -94,6 +110,53 @@ final class AppModel {
         let settings = AppSettingsSnapshot.current
         warmUpServer(settings: settings)
         warmUpPolishServer(settings: settings)
+
+        // Mic-less pipeline test: feed a WAV straight through the real
+        // transcribe → context → correct path (the mic flow is bypassed). Env
+        // LD_PIPELINE_TEST=<wav>; optional LD_PIPELINE_APP / LD_PIPELINE_PRECEDING
+        // / LD_PIPELINE_VISIBLE override the context; result → LD_PIPELINE_OUT.
+        if let wav = ProcessInfo.processInfo.environment["LD_PIPELINE_TEST"] {
+            Task { @MainActor in await self.runPipelineTest(wavPath: wav) }
+        }
+    }
+
+    /// Run a WAV through the real dictation pipeline with no microphone — same
+    /// transcribe → cleanup → correct path as a live dictation, so the context /
+    /// command-mode behaviour can be verified deterministically. Context is the
+    /// real frontmost app unless overridden via env for a controlled test. Writes
+    /// the corrected transcript and exits. Diagnostic-only (env-gated).
+    @MainActor
+    private func runPipelineTest(wavPath: String) async {
+        var settings = AppSettingsSnapshot.current
+        settings.pasteOnRelease = false  // never insert into a real app during a test
+        WhisperLocator.ensureBackendsLinked()
+        warmUpServer(settings: settings)
+
+        let env = ProcessInfo.processInfo.environment
+        var context: DictationContext? = settings.useContextAwareness ? await contextProvider.currentContext() : nil
+        if let app = env["LD_PIPELINE_APP"] {
+            context = DictationContext(
+                activeApplicationName: app,
+                precedingText: env["LD_PIPELINE_PRECEDING"],
+                visibleText: env["LD_PIPELINE_VISIBLE"]
+            )
+        }
+
+        let recorder = FixedFileRecorder(source: URL(fileURLWithPath: wavPath))
+        let workflow = makeWorkflow(settings: settings, context: context, recorderOverride: recorder)
+        try? await workflow.beginRecording()
+        try? await workflow.finishRecording()
+
+        let result = workflow.lastTranscript ?? "(no speech detected / nil)"
+        let line = """
+        app=\(context?.activeApplicationName ?? "nil")
+        preceding=\(context?.precedingText.map { "\"\($0)\"" } ?? "nil")
+        visibleChars=\(context?.visibleText?.count ?? 0)
+        transcript=\(result)
+        """
+        let out = env["LD_PIPELINE_OUT"] ?? "/tmp/ld-pipeline-out.txt"
+        try? line.write(toFile: out, atomically: true, encoding: .utf8)
+        exit(0)
     }
 
     /// Programmatic start/stop (automation/signals), independent of the hold vs
@@ -156,10 +219,19 @@ final class AppModel {
             return
         }
 
+        // Gather on-device context (frontmost app + caret-preceding text + AX
+        // window text) before building the workflow so it can bias recognition and
+        // gate command-mode correction. Cheap synchronous AX/NSWorkspace reads (ms)
+        // — well under the server-warmup latency the mic-first ordering guards
+        // against. OCR (opt-in) is merged from cache only; its refresh is async and
+        // never blocks here. Transient: used to build this dictation, then dropped.
+        let rawContext = settings.useContextAwareness ? await contextProvider.currentContext() : nil
+        let context = enrichWithOCR(rawContext, settings: settings)
+
         // Start capturing audio FIRST so the first word isn't clipped. Server
         // warmup / backend linking only matter for the final pass (seconds
         // later), so they must not delay the mic. makeWorkflow is cheap (no I/O).
-        let workflow = makeWorkflow(settings: settings)
+        let workflow = makeWorkflow(settings: settings, context: context)
         self.workflow = workflow
 
         do {
@@ -195,7 +267,7 @@ final class AppModel {
         warmUpServer(settings: settings)  // (re)starts if the model changed
         warmUpPolishServer(settings: settings)
         if settings.showOverlay, let recorder {
-            startPreviewLoop(recorder: recorder, settings: settings)
+            startPreviewLoop(recorder: recorder, settings: settings, context: context)
         }
     }
 
@@ -297,11 +369,13 @@ final class AppModel {
         return "Something went wrong. Please try again."
     }
 
-    private func makeWorkflow(settings: AppSettingsSnapshot) -> DictationWorkflow {
+    private func makeWorkflow(
+        settings: AppSettingsSnapshot, context: DictationContext?, recorderOverride: AudioRecording? = nil
+    ) -> DictationWorkflow {
         // The final pass prefers the resident server, waiting out a cold model
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
-        let prompt = contextPrompt(settings: settings)
+        let prompt = contextPrompt(settings: settings, context: context)
         let transcriber = ResolvingTranscriptionEngine(
             serverManager: serverManager,
             configuration: makeConfiguration(settings: settings, timeoutSeconds: 60, prompt: prompt),
@@ -313,8 +387,16 @@ final class AppModel {
 
         let inserter = makeInserter(settings: settings)
 
-        let recorder = AudioFileRecorder()
-        self.recorder = recorder
+        // recorderOverride feeds a fixed WAV through the real pipeline (the
+        // mic-less pipeline test); normal dictation creates the live recorder.
+        let recorder: AudioRecording
+        if let recorderOverride {
+            recorder = recorderOverride
+        } else {
+            let live = AudioFileRecorder()
+            self.recorder = live
+            recorder = live
+        }
 
         // Polish (when on) tidies formatting only — caps, punctuation, fillers.
         // Mishearing correction is handled deterministically (preCorrect below)
@@ -328,8 +410,24 @@ final class AppModel {
         // so they apply whenever any correction is on (cleanup or AI polish) — and
         // keep working even when the AI model is off or its server is unavailable.
         let wantsCorrection = settings.cleanUpTranscript || settings.polishWithAI
-        let preCorrect: (@Sendable (String) -> String)? = wantsCorrection
-            ? { @Sendable text in MishearingCorrections.apply(to: text) }
+        // Context-scoped command mode (e.g. "me" -> "main" after `git push origin`)
+        // runs right after the global-safe layer, gated on the focused app class
+        // and caret text captured for THIS dictation. CommandModeCorrections.apply
+        // is itself a no-op unless the composed line is a branch-taking git command,
+        // so the substitution never touches prose — even in a terminal.
+        let appClass = ContextBias.classify(appName: context?.activeApplicationName)
+        let precedingText = context?.precedingText
+        let commandMode = context != nil && appClass.allowsCommandMode
+        let preCorrect: (@Sendable (String) -> String)? = (wantsCorrection || commandMode)
+            ? { @Sendable text in
+                var corrected = wantsCorrection ? MishearingCorrections.apply(to: text) : text
+                if commandMode {
+                    corrected = CommandModeCorrections.apply(
+                        to: corrected, appClass: appClass, precedingText: precedingText
+                    )
+                }
+                return corrected
+            }
             : nil
 
         return DictationWorkflow(
@@ -369,15 +467,53 @@ final class AppModel {
         )
     }
 
-    /// Whisper context prompt from the user's vocabulary + recent history, to
-    /// bias recognition toward their own words (fewer mishearings). Nil = none.
-    private func contextPrompt(settings: AppSettingsSnapshot) -> String? {
+    /// Whisper context prompt from the user's vocabulary + recent history, plus
+    /// the live on-device context (focused app + caret-proximate text) when
+    /// available, to bias recognition toward their own words and what they're
+    /// typing into (fewer mishearings). Nil = none.
+    private func contextPrompt(settings: AppSettingsSnapshot, context: DictationContext?) -> String? {
+        let promptContext = context.map(ContextBias.promptContext(for:))
         let prompt = RecognitionContext.prompt(
             vocabulary: settings.customVocabulary,
             defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
-            history: settings.useHistoryContext ? history : []
+            history: settings.useHistoryContext ? history : [],
+            context: promptContext
         )
         return prompt.isEmpty ? nil : prompt
+    }
+
+    /// Opt-in OCR fallback for apps that expose no AX window text: merge a fresh
+    /// cached OCR for the same app into the context, and kick off a throttled async
+    /// refresh for next time. Never blocks the mic — the slow Vision pass runs in
+    /// the background and only the (instant) cache read happens inline.
+    private func enrichWithOCR(_ context: DictationContext?, settings: AppSettingsSnapshot) -> DictationContext? {
+        // Skip entirely without permission so we never spawn a no-op OCR task.
+        guard settings.useScreenOCR, ScreenOCR.hasPermission,
+              var context, let app = context.activeApplicationName else { return context }
+        // AX already exposed usable window text → no OCR needed.
+        let axText = context.visibleText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard axText.count < Self.minVisibleTextChars else { return context }
+
+        if let cache = ocrCache, cache.app == app, Date().timeIntervalSince(cache.at) < Self.ocrCacheTTL {
+            context.visibleText = cache.text
+        }
+        refreshOCR(for: app)
+        return context
+    }
+
+    /// Refresh the OCR cache for `app` in the background, throttled so a quick run
+    /// of dictations doesn't trigger repeated captures. At most one OCR in flight.
+    private func refreshOCR(for app: String) {
+        if let cache = ocrCache, cache.app == app, Date().timeIntervalSince(cache.at) < Self.ocrRefreshThrottle { return }
+        guard ocrTask == nil else { return }
+        ocrTask = Task { [weak self] in
+            let text = await ScreenOCR.recognizeFocusedWindow()
+            await MainActor.run {
+                guard let self else { return }
+                if let text { self.ocrCache = (app: app, text: text, at: Date()) }
+                self.ocrTask = nil
+            }
+        }
     }
 
     private func recordHistory(_ transcript: String) {
@@ -392,9 +528,9 @@ final class AppModel {
     /// overlay, so the user sees a rolling preview instead of waiting for the
     /// final result. Partial text is lower quality than the final pass and may
     /// revise itself as more speech arrives.
-    private func startPreviewLoop(recorder: AudioFileRecorder, settings: AppSettingsSnapshot) {
+    private func startPreviewLoop(recorder: AudioFileRecorder, settings: AppSettingsSnapshot, context: DictationContext?) {
         let language = settings.normalizedLanguage
-        let prompt = contextPrompt(settings: settings)
+        let prompt = contextPrompt(settings: settings, context: context)
         let cleanupOptions: TranscriptCleaner.Options? = settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil
 
         previewTask?.cancel()
@@ -480,6 +616,21 @@ final class AppModel {
 
 private struct PreviewOnlyInserter: TextInserting {
     func insert(_ text: String) async throws {}
+}
+
+/// Test recorder that feeds a fixed WAV through the workflow instead of the mic.
+/// `finishRecording` deletes the file it's handed (via defer), so each stop
+/// returns a fresh copy of the source — the original survives repeated runs.
+private final class FixedFileRecorder: AudioRecording, @unchecked Sendable {
+    private let source: URL
+    init(source: URL) { self.source = source }
+    func startRecording() async throws {}
+    func stopRecording() async throws -> URL {
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ld-pipeline-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: source, to: copy)
+        return copy
+    }
 }
 
 /// Polishes via the resident llama-server, waiting out a cold model load. If the

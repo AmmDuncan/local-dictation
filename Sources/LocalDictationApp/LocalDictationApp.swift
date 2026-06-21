@@ -1,3 +1,4 @@
+import ApplicationServices
 @preconcurrency import KeyboardShortcuts
 import LocalDictationCore
 import SwiftUI
@@ -110,6 +111,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Diagnostic (release-available, env-gated): verify the live AX context
+        // pipeline at runtime without a microphone — see runContextProbe. No-op
+        // unless LD_CONTEXT_PROBE is set, so it's inert in normal use.
+        if let path = ProcessInfo.processInfo.environment["LD_CONTEXT_PROBE"] {
+            runContextProbe(to: path)
+            return
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["LD_METER_TEST"] != nil {
             runMeterTest()
@@ -154,6 +163,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installSignalControls()
+    }
+
+    /// Diagnostic (env LD_CONTEXT_PROBE=<file>): lets the context pipeline be
+    /// verified at runtime WITHOUT a microphone. Logs accessibility/OCR-permission
+    /// state, then polls ~20s recording, per tick, the frontmost app, its class,
+    /// the caret-preceding text, and how much AX window text (`visibleText`) was
+    /// read. On the first non-self app with any context it records the extracted
+    /// candidates and the command-mode result for a sample "me" — proving the
+    /// gather → classify → substitute chain on real input. With LD_PROBE_OCR set it
+    /// also runs the opt-in OCR fallback and logs what it read. The spoken-ASR step
+    /// still needs a person; everything before it does not.
+    @MainActor
+    private func runContextProbe(to path: String) {
+        let wantOCR = ProcessInfo.processInfo.environment["LD_PROBE_OCR"] != nil
+        if ProcessInfo.processInfo.environment["LD_PROBE_OCR_REQUEST"] != nil {
+            ScreenOCR.requestPermission()  // diagnostic: prompt for Screen Recording
+        }
+        Task { @MainActor in
+            var log = "AXIsProcessTrusted=\(AXIsProcessTrusted()) screenRecordingPermission=\(ScreenOCR.hasPermission)\n"
+            func flush() { try? log.write(toFile: path, atomically: true, encoding: .utf8) }
+            flush()
+            for tick in 0..<40 {
+                let ctx = AccessibilityContextProvider.gather()
+                let app = ctx.activeApplicationName ?? "nil"
+                let cls = ContextBias.classify(appName: ctx.activeApplicationName)
+                let pre = ctx.precedingText
+                let vis = ctx.visibleText
+                log += "tick \(tick): app=\(app) class=\(cls.rawValue) preceding=\(pre.map { "\"\($0)\"" } ?? "nil") visibleChars=\(vis?.count ?? 0)\n"
+                let hasContext = (pre?.isEmpty == false) || (vis?.isEmpty == false)
+                if app != "nil", app != "LocalDictation", hasContext {
+                    let candidates = ContextBias.candidates(precedingText: pre, visibleText: vis)
+                    log += "CAPTURE candidates(\(candidates.count)): \(candidates.prefix(12).joined(separator: ", "))\n"
+                    log += "CAPTURE command_mode: \"me\" -> \"\(CommandModeCorrections.apply(to: "me", appClass: cls, precedingText: pre))\"\n"
+                    if wantOCR {
+                        let ocr = await ScreenOCR.recognizeFocusedWindow()
+                        log += "CAPTURE ocr_capture: \(ocr.map { "\"\(String($0.prefix(240)))\"" } ?? "nil (no Screen Recording permission / no text)")\n"
+                        // Verify the Vision recognition step on a synthetic image —
+                        // proves OCR reads text even when the (permission-gated)
+                        // screen capture can't run.
+                        let sample = "git push origin main feature/context-aware UserStore.swift"
+                        if let image = Self.renderTextImage(sample) {
+                            log += "CAPTURE ocr_selftest: \(ScreenOCR.recognize(image).map { "\"\($0)\"" } ?? "nil")\n"
+                        }
+                    }
+                    flush()
+                    exit(0)
+                }
+                flush()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            log += "DONE (no non-self focused context captured)\n"
+            flush()
+            exit(1)
+        }
+    }
+
+    /// Render text to a white-on-black image, for the OCR self-test (verifies the
+    /// Vision recognition step without Screen Recording). Diagnostic-only.
+    @MainActor
+    private static func renderTextImage(_ text: String) -> CGImage? {
+        let size = NSSize(width: 900, height: 120)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        text.draw(at: NSPoint(x: 20, y: 44), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 34),
+            .foregroundColor: NSColor.black,
+        ])
+        image.unlockFocus()
+        var rect = NSRect(origin: .zero, size: size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
     #if DEBUG

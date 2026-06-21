@@ -37,6 +37,14 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow surfaces corrected (post-polish) transcript, not raw", testWorkflowSurfacesCorrectedTranscript)
         await suite.run("Workflow pre-correct runs before polish", testWorkflowPreCorrectRunsBeforePolish)
         await suite.run("Mishearing corrections fix names, spare real words", testMishearingCorrections)
+        await suite.run("App class classification + command-mode eligibility", testAppClassClassification)
+        await suite.run("Context candidate extraction (identifiers, proximity, dedup)", testContextCandidates)
+        await suite.run("Visible-window text → candidates → prompt (P3)", testVisibleTextCandidates)
+        await suite.run("Command mode: me->main in command context, left alone in prose", testCommandModeCorrections)
+        await suite.run("Recognition prompt folds in live context, weighted + capped", testContextPrompt)
+        await suite.run("Workflow command mode: terminal git push me -> main", testWorkflowCommandModeInsertsMain)
+        await suite.run("Workflow prose: chat 'push to me' left alone", testWorkflowProseLeavesMeAlone)
+        await suite.run("Workflow command mode survives prose cleanup (caps/period)", testWorkflowCommandModeWithCleanup)
         await suite.run("Polish prompt is formatting cleanup only", testPolishPromptCleansOnly)
         await suite.run("Corrector guardrail allows word swaps, rejects expand/summary", testCorrectorGuardrail)
         await suite.run("Text replacements parse + whole-word apply", testTextReplacements)
@@ -624,6 +632,242 @@ private func testMishearingCorrections() throws {
     try expect(MishearingCorrections.apply(to: "Blood Clot risk") == "Blood Clot risk", "'blood clot' guard is case-insensitive")
     try expect(MishearingCorrections.apply(to: "ask clot about it") == "ask Claude about it", "bare 'clot' still corrects")
     try expect(MishearingCorrections.apply(to: "clots and clotting") == "clots and clotting", "inflected forms untouched")
+}
+
+private func testAppClassClassification() throws {
+    try expect(ContextBias.classify(appName: "iTerm2") == .terminal, "iTerm2 → terminal")
+    try expect(ContextBias.classify(appName: "Terminal") == .terminal, "Terminal → terminal")
+    try expect(ContextBias.classify(appName: "Warp") == .terminal, "Warp → terminal")
+    try expect(ContextBias.classify(appName: "Ghostty") == .terminal, "Ghostty → terminal")
+    try expect(ContextBias.classify(appName: "Visual Studio Code") == .editor, "VS Code → editor")
+    try expect(ContextBias.classify(appName: "Code") == .editor, "Code → editor")
+    try expect(ContextBias.classify(appName: "Xcode") == .editor, "Xcode → editor")
+    try expect(ContextBias.classify(appName: "Cursor") == .editor, "Cursor → editor")
+    try expect(ContextBias.classify(appName: "Safari") == .browser, "Safari → browser")
+    try expect(ContextBias.classify(appName: "Google Chrome") == .browser, "Chrome → browser")
+    try expect(ContextBias.classify(appName: "Slack") == .chat, "Slack → chat")
+    try expect(ContextBias.classify(appName: "Messages") == .chat, "Messages → chat")
+    try expect(ContextBias.classify(appName: "Notes") == .notes, "Notes → notes")
+    try expect(ContextBias.classify(appName: "Obsidian") == .notes, "Obsidian → notes")
+    try expect(ContextBias.classify(appName: nil) == .unknown, "nil → unknown")
+    try expect(ContextBias.classify(appName: "Spotify") == .unknown, "unrelated app → unknown")
+
+    // Only shells/editors are eligible for command-mode substitution.
+    try expect(ContextBias.AppClass.terminal.allowsCommandMode, "terminal allows command mode")
+    try expect(ContextBias.AppClass.editor.allowsCommandMode, "editor allows command mode")
+    try expect(!ContextBias.AppClass.chat.allowsCommandMode, "chat does not")
+    try expect(!ContextBias.AppClass.notes.allowsCommandMode, "notes does not")
+    try expect(!ContextBias.AppClass.browser.allowsCommandMode, "browser does not")
+    try expect(!ContextBias.AppClass.unknown.allowsCommandMode, "unknown does not")
+
+    // App-class vocabulary: dev terms for shells/editors, nothing for prose apps.
+    try expect(ContextBias.vocabulary(for: .terminal).contains("main"), "terminal vocab has 'main'")
+    try expect(ContextBias.vocabulary(for: .editor).contains("branch"), "editor vocab has 'branch'")
+    try expect(ContextBias.vocabulary(for: .chat).isEmpty, "chat gets no jargon bias")
+}
+
+private func testContextCandidates() throws {
+    // Identifier shapes are interesting; ordinary lowercase words are not.
+    try expect(ContextBias.isInteresting("feat/context-aware"), "slash identifier is interesting")
+    try expect(ContextBias.isInteresting("main.swift"), "filename is interesting")
+    try expect(ContextBias.isInteresting("snake_case"), "underscore id is interesting")
+    try expect(ContextBias.isInteresting("camelCase"), "camelCase is interesting")
+    try expect(ContextBias.isInteresting("HEAD"), "ALLCAPS is interesting")
+    try expect(ContextBias.isInteresting("v0.2.3"), "version is interesting")
+    try expect(!ContextBias.isInteresting("the"), "ordinary word is not interesting")
+    try expect(!ContextBias.isInteresting("origin"), "plain lowercase word is not interesting")
+    try expect(!ContextBias.isInteresting("a"), "single char is not interesting")
+
+    // Extraction: preceding-first proximity order, punctuation trimmed, deduped,
+    // ordinary words dropped.
+    let cands = ContextBias.candidates(
+        precedingText: "git checkout feat/login,",
+        visibleText: "On branch develop; see UserStore.swift and feat/login again"
+    )
+    try expect(cands.first == "feat/login", "preceding candidate leads, trailing comma trimmed")
+    try expect(cands.contains("UserStore.swift"), "visible identifiers are extracted")
+    try expect(cands.filter { $0.lowercased() == "feat/login" }.count == 1, "deduped across sources")
+    try expect(!cands.contains("On") && !cands.contains("branch") && !cands.contains("develop"), "ordinary words excluded")
+}
+
+private func testVisibleTextCandidates() throws {
+    // P3: AX window text (here, terminal-scrollback style) — branch names,
+    // filenames, and identifiers are surfaced; ordinary prose is dropped. This is
+    // what lets recognition lean toward on-screen terms even with no caret text.
+    let scrollback = """
+    ammiel@host project % git status
+    On branch feature/login-v2
+    Your branch is up to date with origin/main
+    modified:   Sources/AppModel.swift
+    nothing to commit, working tree clean
+    """
+    let cands = ContextBias.candidates(precedingText: nil, visibleText: scrollback)
+    try expect(cands.contains("feature/login-v2"), "branch name extracted from window text")
+    try expect(cands.contains(where: { $0.contains("AppModel.swift") }), "filename extracted")
+    try expect(cands.contains(where: { $0.lowercased().contains("origin/main") }), "origin/main extracted")
+    try expect(!cands.contains("branch") && !cands.contains("nothing"), "ordinary words excluded")
+
+    // promptContext surfaces window-text candidates, and they reach the prompt.
+    let ctx = ContextBias.promptContext(
+        for: DictationContext(activeApplicationName: "Terminal", visibleText: scrollback)
+    )
+    try expect(ctx.candidates.contains("feature/login-v2"), "promptContext carries window-text candidates")
+    let p = RecognitionContext.prompt(vocabulary: "", history: [], context: ctx)
+    try expect(p.contains("feature/login-v2"), "window-text candidate reaches the whisper prompt")
+}
+
+private func testCommandModeCorrections() throws {
+    // Command context = terminal/editor AND a branch-taking git command in the line.
+    try expect(
+        CommandModeCorrections.isCommandContext(appClass: .terminal, line: "git push origin me"),
+        "terminal + git push is command context"
+    )
+    try expect(
+        CommandModeCorrections.isCommandContext(appClass: .editor, line: "git checkout me"),
+        "editor + git checkout is command context"
+    )
+    try expect(
+        !CommandModeCorrections.isCommandContext(appClass: .chat, line: "git push origin me"),
+        "chat is never command context, even with a git command"
+    )
+    try expect(
+        !CommandModeCorrections.isCommandContext(appClass: .terminal, line: "git commit -m fix me"),
+        "git commit is not a branch command (takes a message)"
+    )
+    try expect(
+        !CommandModeCorrections.isCommandContext(appClass: .terminal, line: "tell me about it"),
+        "a non-git line is not command context"
+    )
+
+    // THE fix — "me" -> "main" FIRES in command context.
+    try expect(
+        CommandModeCorrections.apply(to: "me", appClass: .terminal, precedingText: "git push origin ") == "main",
+        "me -> main when preceding text is a git push"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "git push origin me", appClass: .terminal, precedingText: nil) == "git push origin main",
+        "whole dictated command: me -> main"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "mane", appClass: .editor, precedingText: "git checkout ") == "main",
+        "homophone 'mane' -> main"
+    )
+    // Command-aware formatting: lowercase a leading "Git", strip a trailing period.
+    try expect(
+        CommandModeCorrections.apply(to: "Git push origin me.", appClass: .terminal, precedingText: nil) == "git push origin main",
+        "command formatting: lowercase Git + strip trailing period"
+    )
+
+    // LEFT ALONE in prose context — the whole point of context-scoping.
+    try expect(
+        CommandModeCorrections.apply(to: "push to me", appClass: .chat, precedingText: "tell them to ") == "push to me",
+        "prose 'push to me' is left alone in chat"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "me", appClass: .notes, precedingText: "git push origin ") == "me",
+        "notes is prose → left alone even with a git-like preceding line"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "fix me", appClass: .terminal, precedingText: "git commit -m ") == "fix me",
+        "terminal commit message 'fix me' left alone (commit isn't a branch command)"
+    )
+}
+
+private func testContextPrompt() throws {
+    let context = ContextBias.PromptContext(
+        precedingText: "git push origin",
+        appVocabulary: ContextBias.vocabulary(for: .terminal),
+        candidates: ["feat/login", "UserStore.swift"]
+    )
+    let p = RecognitionContext.prompt(vocabulary: "Nxabyte", defaults: [], history: [], context: context, maxChars: 600)
+    try expect(p.hasPrefix("Nxabyte"), "user vocabulary leads")
+    try expect(p.contains("git push origin"), "preceding text folded in")
+    try expect(p.contains("feat/login") && p.contains("UserStore.swift"), "candidates folded in")
+    try expect(p.contains("main") && p.contains("branch"), "app-class vocabulary folded in")
+    let preceding = p.range(of: "git push origin")!.lowerBound
+    let appVocab = p.range(of: "branch")!.lowerBound
+    try expect(preceding < appVocab, "caret-proximate preceding text precedes app-class vocab")
+
+    // No context → byte-identical to before (backward compatible).
+    try expect(
+        RecognitionContext.prompt(vocabulary: "X", history: [], context: nil) == "X",
+        "nil context → unchanged"
+    )
+    // Budget is respected even with context: an over-long preceding text is dropped
+    // rather than blowing the cap.
+    let capped = RecognitionContext.prompt(
+        vocabulary: "", defaults: [], history: [],
+        context: ContextBias.PromptContext(
+            precedingText: String(repeating: "x", count: 500),
+            appVocabulary: ContextBias.vocabulary(for: .terminal),
+            candidates: []
+        ),
+        maxChars: 120
+    )
+    try expect(capped.count <= 120, "context prompt respects maxChars, got \(capped.count)")
+}
+
+private func testWorkflowCommandModeInsertsMain() async throws {
+    // Mirrors AppModel's preCorrect composition: global-safe fixes, then the
+    // context-gated command mode. In a terminal after `git push origin`, the
+    // misheard "me" must be inserted as "main".
+    let inserter = StubInserter()
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "me"),
+        inserter: inserter,
+        preCorrect: { text in
+            CommandModeCorrections.apply(
+                to: MishearingCorrections.apply(to: text), appClass: .terminal, precedingText: "git push origin "
+            )
+        }
+    )
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(inserter.insertedText == "main", "terminal git push: me -> main, got \(inserter.insertedText ?? "nil")")
+}
+
+private func testWorkflowProseLeavesMeAlone() async throws {
+    // Same composition, but in Slack (chat) — command mode must NOT fire, so the
+    // exact same words are inserted unchanged.
+    let inserter = StubInserter()
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "push to me"),
+        inserter: inserter,
+        preCorrect: { text in
+            CommandModeCorrections.apply(
+                to: MishearingCorrections.apply(to: text), appClass: .chat, precedingText: "tell them to "
+            )
+        }
+    )
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(inserter.insertedText == "push to me", "chat prose left alone, got \(inserter.insertedText ?? "nil")")
+}
+
+private func testWorkflowCommandModeWithCleanup() async throws {
+    // With prose cleanup ON (it capitalizes the first word), command mode must
+    // still produce a clean shell command — "git push origin main", not
+    // "Git push origin main".
+    let inserter = StubInserter()
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "git push origin me"),
+        inserter: inserter,
+        cleanupOptions: TranscriptCleaner.Options(),
+        preCorrect: { text in
+            CommandModeCorrections.apply(
+                to: MishearingCorrections.apply(to: text), appClass: .terminal, precedingText: nil
+            )
+        }
+    )
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(
+        inserter.insertedText == "git push origin main",
+        "cleanup + command mode → git push origin main, got \(inserter.insertedText ?? "nil")"
+    )
 }
 
 private func testPolishPromptCleansOnly() throws {

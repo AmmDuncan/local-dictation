@@ -1,5 +1,37 @@
 # Context-Aware Dictation — Design Spec
 
+**Status:** P1 + P2 implemented (branch `feat/context-aware-dictation`) · P3–P5 deferred · **Date:** 2026-06-20 · **Repo:** `~/work/tools/local-dictation`
+
+## Implementation status (2026-06-20)
+
+- **P1 (recognition bias) — DONE.** `AccessibilityContextProvider` (NSWorkspace
+  frontmost app + AX focused-element role + caret-preceding text); `CaretContext`
+  extended from 1 char to the preceding line (secure fields never read);
+  `ContextBias` (app-class taxonomy + app-class vocabulary + identifier-candidate
+  extraction); `RecognitionContext.prompt` folds the live context in,
+  caret-proximity weighted, within the existing budget. Wired into
+  `AppModel.contextPrompt` (final + preview passes).
+- **P2 (command mode) — DONE.** `CommandModeCorrections`: gated on
+  terminal/editor app class AND a branch-taking git command in the composed line
+  (`push|pull|fetch|checkout|switch|merge|rebase|branch|reset|cherry-pick`),
+  maps the branch-position homophones (`me|mane|maine|mein → main`) and applies
+  command-aware formatting (strip trailing period, lowercase a leading `Git`).
+  `commit`/`-m` deliberately excluded. Runs after the global-safe
+  `MishearingCorrections` in `AppModel`'s `preCorrect`.
+- **Setting:** `useContextAwareness` (default on; AX-only, no new permission) with
+  an Advanced-tab toggle. Context is transient — gathered per dictation, never
+  logged or persisted.
+- **Tests:** `LocalDictationCoreTestRunner` 40 → 47 (app-class classification,
+  candidate extraction, command-pattern detection, context-folded prompt, and the
+  key pair: `me→main` fires in command context, left alone in prose — both pure
+  and end-to-end through `DictationWorkflow`). `scripts/build-app.sh` green.
+- **Not done:** P3 (AX visible-window text → candidates; `visibleText` is honored
+  by `ContextBias` if a provider fills it, but no provider walks the window tree
+  yet), P4 (OCR fallback), P5 (context-grounded LLM substitution). Live
+  real-voice verification pending the user's mic.
+
+**Original spec below.**
+
 **Status:** Proposed (not started) · **Date:** 2026-06-20 · **Repo:** `~/work/tools/local-dictation`, branch `main`
 
 ## Problem
