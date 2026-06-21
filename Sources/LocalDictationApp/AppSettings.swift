@@ -1,4 +1,5 @@
 import Foundation
+import LocalDictationCore
 
 enum AppSettingsKeys {
     static let whisperExecutablePath = "whisperExecutablePath"
@@ -108,12 +109,35 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.activationMode: Defaults.activationMode,
             AppSettingsKeys.saveHistory: Defaults.saveHistory
         ])
+        migrateLegacyLanguageDefault()
+    }
+
+    /// One-time bump of the legacy `auto` language to `en`. Short push-to-talk
+    /// clips make Whisper's per-clip language auto-detect unreliable — on 1–3s of
+    /// speech it mis-detects and injects stray foreign words — so English is the
+    /// better default for an English user. Runs exactly once: a later explicit
+    /// language choice (including deliberately re-selecting `auto`) is respected
+    /// because the migration flag is already set.
+    private static func migrateLegacyLanguageDefault() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "languageDefaultMigratedToEn"
+        let alreadyMigrated = defaults.bool(forKey: migrationKey)
+        defaults.set(true, forKey: migrationKey)
+        if let migrated = LanguageDefaultMigration.migratedValue(
+            stored: defaults.string(forKey: AppSettingsKeys.language),
+            alreadyMigrated: alreadyMigrated
+        ) {
+            defaults.set(migrated, forKey: AppSettingsKeys.language)
+        }
     }
 
     enum Defaults {
         static let whisperExecutablePath = ""  // empty = auto-locate (bundled, then Homebrew)
         static let modelPath = "~/models/ggml-base.en.bin"
-        static let language = "auto"
+        // English by default: per-clip language auto-detect is unreliable on short
+        // dictation clips. Non-English users can switch in Settings (see the
+        // one-time `auto` → `en` migration in registerDefaults).
+        static let language = "en"
         static let pasteOnRelease = true
         static let showOverlay = true
         static let inputDeviceUID = ""  // empty = system default input

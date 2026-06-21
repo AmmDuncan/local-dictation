@@ -49,6 +49,10 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         channels: 1,
         interleaved: false
     )!
+    /// Keep capturing this long after a stop request so the last in-flight tap
+    /// buffer — usually the trailing syllable of the final word — flushes before
+    /// teardown. Small enough to stay within the push-to-talk latency budget.
+    private static let trailingCaptureMillis = 250
     private var converter: AVAudioConverter?
     private let lock = NSLock()
     private var samples: [Float] = []
@@ -116,6 +120,12 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         guard isCapturing else {
             throw AudioRecordingError.notRecording
         }
+
+        // Users release the hotkey the instant they finish the last word, so the
+        // final tap buffer (the trailing syllable) is often still in flight. Keep
+        // the tap live a beat longer before teardown so it lands in `samples`
+        // instead of being clipped by the immediate stop.
+        try? await Task.sleep(for: .milliseconds(Self.trailingCaptureMillis))
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -211,6 +221,10 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     }
 
     private func writeWav(to url: URL, samples: [Float]) throws {
+        // Peak-normalize before writing so a quiet mic still gives Whisper usable
+        // headroom (see AudioNormalizer). Applied here, the one choke point, so the
+        // final pass and the live preview snapshot agree.
+        let samples = AudioNormalizer.peakNormalized(samples)
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: 16_000,

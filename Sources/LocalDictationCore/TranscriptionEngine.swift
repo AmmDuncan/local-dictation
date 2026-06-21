@@ -320,6 +320,17 @@ private func runWhisper(configuration: WhisperCLIConfiguration, audioFile: URL) 
     return transcript
 }
 
+/// Tuned Silero-VAD parameters for short push-to-talk dictation, shared by the
+/// resident `whisper-server` launch and the `whisper-cli` fallback so both decode
+/// paths behave identically. A wider speech pad (200ms vs whisper's 30ms default)
+/// keeps soft word onsets/offsets — trailing consonants, fricatives — that the
+/// default clips; a shorter minimum speech duration (100ms vs 250ms) stops
+/// one-syllable utterances ("yes", "no", a short name) being discarded as
+/// non-speech. Appended only when a VAD model is actually present.
+public enum WhisperVAD {
+    public static let dictationTuningArguments = ["-vp", "200", "-vspd", "100"]
+}
+
 /// Builds the whisper-cli argument vector. Exposed for testing the beam-clamp
 /// and language-suppression rules.
 public enum WhisperCLICommand {
@@ -345,7 +356,7 @@ public enum WhisperCLICommand {
         }
 
         if let vad = configuration.vadModelPath, !vad.isEmpty {
-            arguments.append(contentsOf: ["--vad", "-vm", vad])
+            arguments.append(contentsOf: ["--vad", "-vm", vad] + WhisperVAD.dictationTuningArguments)
         }
 
         if let prompt = configuration.prompt?.trimmingCharacters(in: .whitespacesAndNewlines),

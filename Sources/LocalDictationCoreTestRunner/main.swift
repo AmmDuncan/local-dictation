@@ -20,6 +20,9 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Polish request body + response parsing", testPolishRequestAndParsing)
         await suite.run("Whisper args omit language for auto/empty/nil", testWhisperArgsOmitLanguage)
         await suite.run("Whisper args clamp bad beam size", testWhisperArgsClampBeam)
+        await suite.run("Whisper args add tuned VAD flags when model present", testWhisperArgsVADTuning)
+        await suite.run("Audio peak-normalization boosts quiet, spares hot/silent, caps gain", testAudioPeakNormalization)
+        await suite.run("Language migration: auto->en once, respects other choices", testLanguageDefaultMigration)
         await suite.run("Parser falls through whitespace-only sidecar", testParserWhitespaceSidecarFallsThrough)
         await suite.run("Parser filters ggml log lines", testParserFiltersGgmlLogs)
         await suite.run("Parser keeps annotations, insertion strips them", testParserKeepsAnnotationsButInsertionStrips)
@@ -376,6 +379,68 @@ private func testWhisperArgsClampBeam() throws {
     )
     let bsIndex = beam.firstIndex(of: "-bs")!
     try expect(beam[beam.index(after: bsIndex)] == "4", "Expected -bs 4, got \(beam)")
+}
+
+private func testWhisperArgsVADTuning() throws {
+    let audio = URL(fileURLWithPath: "/tmp/a.wav")
+    let outputBase = URL(fileURLWithPath: "/tmp/out")
+    // No VAD model → no VAD flags at all.
+    let noVad = WhisperCLICommand.arguments(
+        configuration: .init(executablePath: "/x", modelPath: "/m", language: nil),
+        audioFile: audio, outputBase: outputBase
+    )
+    try expect(!noVad.contains("--vad"), "Expected no --vad without a model, got \(noVad)")
+    // With a VAD model → --vad -vm <path> followed by the dictation tuning flags.
+    let withVad = WhisperCLICommand.arguments(
+        configuration: .init(executablePath: "/x", modelPath: "/m", language: nil, vadModelPath: "/v/silero.bin"),
+        audioFile: audio, outputBase: outputBase
+    )
+    try expect(withVad.contains("--vad") && withVad.contains("-vm"), "Expected --vad -vm, got \(withVad)")
+    for flag in WhisperVAD.dictationTuningArguments {
+        try expect(withVad.contains(flag), "Expected tuned VAD flag \(flag), got \(withVad)")
+    }
+    try expect(
+        withVad.contains("200") && withVad.contains("100"),
+        "Expected tuned VAD values 200/100, got \(withVad)"
+    )
+}
+
+private func testAudioPeakNormalization() throws {
+    func peak(_ s: [Float]) -> Float { s.map(abs).max() ?? 0 }
+    let approx: (Float, Float) -> Bool = { abs($0 - $1) < 1e-4 }
+
+    // Quiet clip (peak 0.1) → scaled up to the 0.9 target.
+    let quiet = AudioNormalizer.peakNormalized([0.1, -0.1, 0.05])
+    try expect(approx(peak(quiet), 0.9), "Expected quiet clip boosted to ~0.9, got \(peak(quiet))")
+
+    // Already hot (peak 0.8 ≥ 0.7) → untouched.
+    let hot: [Float] = [0.8, -0.2, 0.4]
+    try expect(AudioNormalizer.peakNormalized(hot) == hot, "Expected hot clip unchanged, got \(AudioNormalizer.peakNormalized(hot))")
+
+    // Very quiet (peak 0.01) → gain capped at 30, so peak lands at 0.3, not 0.9.
+    let capped = AudioNormalizer.peakNormalized([0.01, -0.01])
+    try expect(approx(peak(capped), 0.3), "Expected capped boost to ~0.3, got \(peak(capped))")
+
+    // Silence and empty → untouched.
+    try expect(AudioNormalizer.peakNormalized([0, 0, 0]) == [0, 0, 0], "Expected silence unchanged")
+    try expect(AudioNormalizer.peakNormalized([]) == [], "Expected empty unchanged")
+}
+
+private func testLanguageDefaultMigration() throws {
+    try expect(
+        LanguageDefaultMigration.migratedValue(stored: "auto", alreadyMigrated: false) == "en",
+        "Legacy auto should migrate to en"
+    )
+    try expect(
+        LanguageDefaultMigration.migratedValue(stored: "auto", alreadyMigrated: true) == nil,
+        "Already-migrated auto must be left alone (respects a deliberate re-selection)"
+    )
+    for stored in ["en", "fr", "", nil] as [String?] {
+        try expect(
+            LanguageDefaultMigration.migratedValue(stored: stored, alreadyMigrated: false) == nil,
+            "Non-auto choice \(stored ?? "nil") must be respected, not migrated"
+        )
+    }
 }
 
 private func testParserWhitespaceSidecarFallsThrough() throws {

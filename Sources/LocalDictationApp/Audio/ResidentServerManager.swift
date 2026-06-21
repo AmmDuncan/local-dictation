@@ -21,13 +21,14 @@ final class ResidentServerManager {
         /// response counts (whisper-server answers "/" once the model is loaded).
         let requireHTTPOK: Bool
 
-        /// whisper-server: greedy, no-timestamps, optional bundled VAD; "/" ready.
+        /// whisper-server: beam-1, no-timestamps, optional bundled VAD tuned for
+        /// short dictation (see WhisperVAD.dictationTuningArguments); "/" ready.
         static var whisper: Config {
             Config(
                 arguments: { model, port in
                     var args = ["-m", model, "--host", "127.0.0.1", "--port", String(port), "-nt", "-bs", "1"]
                     if let vad = WhisperLocator.resolvedVadModel() {
-                        args.append(contentsOf: ["--vad", "-vm", vad])
+                        args.append(contentsOf: ["--vad", "-vm", vad] + WhisperVAD.dictationTuningArguments)
                     }
                     return args
                 },
