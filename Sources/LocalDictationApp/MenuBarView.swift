@@ -145,8 +145,11 @@ struct MenuBarView: View {
     }
 
     private var shortcutLabel: String {
-        if let shortcut = KeyboardShortcuts.getShortcut(for: .holdToDictate) {
-            return "Hold \(shortcut) to dictate"
+        if let hold = KeyboardShortcuts.getShortcut(for: .holdToDictate) {
+            return "Hold \(hold) to dictate"
+        }
+        if let toggle = KeyboardShortcuts.getShortcut(for: .toggleDictate) {
+            return "Tap \(toggle) to dictate"
         }
         return "Set a shortcut in Settings to begin"
     }

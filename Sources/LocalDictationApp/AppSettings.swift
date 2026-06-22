@@ -19,15 +19,12 @@ enum AppSettingsKeys {
     static let textReplacements = "textReplacements"
     static let insertionMethod = "insertionMethod"
     static let smartSpacing = "smartSpacing"
-    static let activationMode = "activationMode"
     static let saveHistory = "saveHistory"
     static let rejectedBuiltInSwaps = "rejectedBuiltInSwaps"
     static let liveReinsertionEnabled = "liveReinsertionEnabled"
     static let logCorrections = "logCorrections"
 }
 
-/// How a dictation key-press behaves.
-enum ActivationMode: String { case hold, toggle }
 /// How transcribed text reaches the cursor.
 enum InsertionMethod: String { case paste, keystroke }
 
@@ -49,7 +46,6 @@ struct AppSettingsSnapshot: Equatable {
     var textReplacements: String
     var insertionMethod: String
     var smartSpacing: Bool
-    var activationMode: String
     var saveHistory: Bool
     var rejectedBuiltInSwaps: String
     var liveReinsertionEnabled: Bool
@@ -60,7 +56,6 @@ struct AppSettingsSnapshot: Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    var activation: ActivationMode { ActivationMode(rawValue: activationMode) ?? .hold }
     var insertion: InsertionMethod { InsertionMethod(rawValue: insertionMethod) ?? .paste }
 
     static var current: AppSettingsSnapshot {
@@ -84,7 +79,6 @@ struct AppSettingsSnapshot: Equatable {
             textReplacements: defaults.string(forKey: AppSettingsKeys.textReplacements) ?? Defaults.textReplacements,
             insertionMethod: defaults.string(forKey: AppSettingsKeys.insertionMethod) ?? Defaults.insertionMethod,
             smartSpacing: defaults.object(forKey: AppSettingsKeys.smartSpacing) as? Bool ?? Defaults.smartSpacing,
-            activationMode: defaults.string(forKey: AppSettingsKeys.activationMode) ?? Defaults.activationMode,
             saveHistory: defaults.object(forKey: AppSettingsKeys.saveHistory) as? Bool ?? Defaults.saveHistory,
             rejectedBuiltInSwaps: defaults.string(forKey: AppSettingsKeys.rejectedBuiltInSwaps) ?? Defaults.rejectedBuiltInSwaps,
             liveReinsertionEnabled: defaults.object(forKey: AppSettingsKeys.liveReinsertionEnabled) as? Bool ?? Defaults.liveReinsertionEnabled,
@@ -111,7 +105,6 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.textReplacements: Defaults.textReplacements,
             AppSettingsKeys.insertionMethod: Defaults.insertionMethod,
             AppSettingsKeys.smartSpacing: Defaults.smartSpacing,
-            AppSettingsKeys.activationMode: Defaults.activationMode,
             AppSettingsKeys.saveHistory: Defaults.saveHistory,
             AppSettingsKeys.rejectedBuiltInSwaps: Defaults.rejectedBuiltInSwaps,
             AppSettingsKeys.liveReinsertionEnabled: Defaults.liveReinsertionEnabled,
@@ -166,7 +159,6 @@ struct AppSettingsSnapshot: Equatable {
         static let textReplacements = ""
         static let insertionMethod = InsertionMethod.paste.rawValue
         static let smartSpacing = false  // opt-in: needs accessibility to read caret context
-        static let activationMode = ActivationMode.hold.rawValue
         static let saveHistory = true
         static let rejectedBuiltInSwaps = ""  // JSON [String] of rejected built-in swap identities (suppression set)
         static let liveReinsertionEnabled = false  // experimental: AX select-verify-replace of the current instance

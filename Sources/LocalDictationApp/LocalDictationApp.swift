@@ -439,6 +439,10 @@ private struct OverlayPreview: View {
 extension KeyboardShortcuts.Name {
     @MainActor
     static let holdToDictate = Self("holdToDictate", default: .init(.space, modifiers: [.control]))
+    /// Tap-to-start / tap-to-stop dictation. No default — the behavior is chosen
+    /// by which key you press (hold vs. toggle), each set in the General tab.
+    @MainActor
+    static let toggleDictate = Self("toggleDictate")
     /// Opens the review panel for the last dictation (Door #1). Pressing it while
     /// the "Typed" card is up — or any time after — reviews the most recent result.
     @MainActor

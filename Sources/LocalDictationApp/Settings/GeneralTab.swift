@@ -9,7 +9,6 @@ struct GeneralTab: View {
     @Binding var polishWithAI: Bool
     var polishStore: PolishModelStore
     @Binding var language: String
-    @Binding var activationMode: String
     @Binding var saveHistory: Bool
     var refresh: () -> Void
 
@@ -19,16 +18,17 @@ struct GeneralTab: View {
                 .padding([.horizontal, .top], 16)
 
             Form {
-                Section("Shortcut") {
-                    KeyboardShortcuts.Recorder("Dictation key", name: .holdToDictate)
-                        .help("⌃Space is the default. Note: macOS also uses ⌃Space to switch input sources — if you have more than one input source, pick a different key here.")
+                Section {
+                    KeyboardShortcuts.Recorder("Hold to talk", name: .holdToDictate)
+                        .help("Record while this key is held down, release to insert. ⌃Space by default. Note: macOS also uses ⌃Space to switch input sources — if you have more than one, pick a different key here.")
+                    KeyboardShortcuts.Recorder("Tap to start / stop", name: .toggleDictate)
+                        .help("Hands-free: tap once to start, tap again to stop. Leave empty if you only want hold-to-talk. Esc cancels either way.")
                     KeyboardShortcuts.Recorder("Review last dictation", name: .reviewLastDictation)
                         .help("Opens the review panel for your most recent dictation, where you can revert a correction or teach a fix. ⌃⌥Z by default — rebind it if it clashes with another app (e.g. a screenshot tool on ⌥Z).")
-                    Picker("Activation", selection: $activationMode) {
-                        Text("Hold to talk").tag(ActivationMode.hold.rawValue)
-                        Text("Tap to start / stop").tag(ActivationMode.toggle.rawValue)
-                    }
-                    .help("Hold: record while the key is down. Toggle: tap once to start, again to stop. Esc cancels either way.")
+                } header: {
+                    Text("Shortcuts")
+                } footer: {
+                    Text("Set either or both — pick the dictation key by feel: hold-to-talk for a quick burst, tap-to-toggle for hands-free.")
                 }
 
                 Section("Output") {

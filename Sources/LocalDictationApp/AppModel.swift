@@ -58,23 +58,25 @@ final class AppModel {
         // so stale orphans die before fresh servers start. Scoped to this bundle's
         // Helpers dir — never touches a Homebrew whisper-server/llama-server.
         Self.reapOrphanedHelpers()
+        Self.migrateActivationShortcutIfNeeded()
 
+        // Hold-to-talk: record while the key is held down.
         KeyboardShortcuts.onKeyDown(for: .holdToDictate) { [weak self] in
+            Task { @MainActor in await self?.beginHold() }
+        }
+        KeyboardShortcuts.onKeyUp(for: .holdToDictate) { [weak self] in
+            Task { @MainActor in await self?.endHold() }
+        }
+
+        // Tap-to-toggle: first press starts, next press stops. Key-up ignored.
+        KeyboardShortcuts.onKeyDown(for: .toggleDictate) { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                // Toggle mode: key-down flips recording on/off. Hold mode: starts.
-                if AppSettingsSnapshot.current.activation == .toggle, self.isRecording || self.isStarting {
+                if self.isRecording || self.isStarting {
                     await self.endHold()
                 } else {
                     await self.beginHold()
                 }
-            }
-        }
-
-        KeyboardShortcuts.onKeyUp(for: .holdToDictate) { [weak self] in
-            Task { @MainActor in
-                guard let self, AppSettingsSnapshot.current.activation == .hold else { return }
-                await self.endHold()
             }
         }
 
@@ -137,6 +139,23 @@ final class AppModel {
     private static func reapOrphanedHelpers() {
         let helpersDir = Bundle.main.bundlePath + "/Contents/Helpers"
         HelperProcessReaper.reap(helpersDir: helpersDir)
+    }
+
+    /// One-time migration from the old single-shortcut "Activation" setting to two
+    /// dedicated shortcuts. Users who were on `toggle` keep tap-to-toggle by moving
+    /// their dictation key onto the new toggle shortcut (and clearing the hold one).
+    /// Hold-mode users (the default) are untouched.
+    @MainActor
+    private static func migrateActivationShortcutIfNeeded() {
+        let defaults = UserDefaults.standard
+        let flag = "didMigrateActivationShortcut"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+
+        guard defaults.string(forKey: "activationMode") == "toggle",
+              let current = KeyboardShortcuts.getShortcut(for: .holdToDictate) else { return }
+        KeyboardShortcuts.setShortcut(current, for: .toggleDictate)
+        KeyboardShortcuts.setShortcut(nil, for: .holdToDictate)
     }
 
     /// Run a WAV through the real dictation pipeline with no microphone — same
@@ -639,9 +658,11 @@ final class AppModel {
                     continue
                 }
 
-                // Skip near-silence so whisper doesn't hallucinate phantom words
-                // on no input, and clean what it does return like the final pass.
-                guard recorder.currentLevel > 0.05, let url = recorder.snapshotForPreview() else {
+                // Only refresh the preview when speech actually arrived recently.
+                // During a silent hold the audio is near-silence and whisper
+                // hallucinates *different* phantom phrases each pass — gating on
+                // recent speech freezes the last preview instead of cycling.
+                guard recorder.hadSpeechRecently(), let url = recorder.snapshotForPreview() else {
                     continue
                 }
                 defer { try? FileManager.default.removeItem(at: url) }

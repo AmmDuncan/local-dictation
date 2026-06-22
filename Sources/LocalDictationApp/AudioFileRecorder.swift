@@ -62,6 +62,12 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     private var samples: [Float] = []
     private var _isCapturing = false
     private var _currentLevel: Double = 0
+    private var _lastSpeechAt: Date?
+    /// Normalized mic level (0…1, RMS→dBFS) above which a buffer counts as speech
+    /// rather than ambient/breath — sits clearly above a quiet room (~0.2) and
+    /// below normal speech (~0.5+). The live preview gates on recent speech so a
+    /// silent hold doesn't cycle through whisper's phantom transcriptions.
+    private static let speechLevelThreshold = 0.3
     /// Set true (under `lock`) once the tap delivers its first buffer after a
     /// start. Lets `startRecording` hold "ready" until the mic is actually live.
     private var _sawFirstAudio = false
@@ -71,6 +77,15 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     var currentLevel: Double {
         lock.lock(); defer { lock.unlock() }
         return _currentLevel
+    }
+
+    /// True if speech-level audio arrived within `window` seconds. The preview
+    /// loop gates on this so a silent hold freezes the last preview instead of
+    /// cycling through whisper's hallucinated phrases on near-silence.
+    func hadSpeechRecently(within window: TimeInterval = 1.0) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let last = _lastSpeechAt else { return false }
+        return Date().timeIntervalSince(last) <= window
     }
 
     private var isCapturing: Bool {
@@ -253,6 +268,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         lock.lock()
         samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: frames))
         _currentLevel = level
+        if level > Self.speechLevelThreshold { _lastSpeechAt = Date() }
         lock.unlock()
     }
 
@@ -271,6 +287,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     private func clearSamples() {
         lock.lock()
         samples.removeAll(keepingCapacity: true)
+        _lastSpeechAt = nil
         lock.unlock()
     }
 
