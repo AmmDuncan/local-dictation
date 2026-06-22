@@ -30,7 +30,11 @@ final class AudioLevelMeter {
     private(set) var level: Double = 0
     private(set) var isRunning = false
 
-    private let engine = AVAudioEngine()
+    // Fresh engine per start: `kAudioOutputUnitProperty_CurrentDevice` only binds
+    // on an uninitialized HAL unit, so a reused engine would silently ignore the
+    // device switch and stay on whatever it first bound (the recorder does the
+    // same for this reason).
+    private var engine = AVAudioEngine()
     private let box = LevelBox()
 
     func start(deviceUID: String) {
@@ -38,8 +42,9 @@ final class AudioLevelMeter {
         // Touching inputNode without microphone permission traps on macOS.
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
 
+        engine = AVAudioEngine()
         let input = engine.inputNode
-        if let deviceID = AudioDevices.deviceID(forUID: deviceUID), let unit = input.audioUnit {
+        if let deviceID = AudioDevices.resolveInputDeviceID(forUID: deviceUID), let unit = input.audioUnit {
             var value = deviceID
             AudioUnitSetProperty(
                 unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,

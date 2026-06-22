@@ -16,6 +16,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Cleaner removes fillers + fixes caps/spacing", testTranscriptCleanerBasics)
         await suite.run("Cleaner preserves meaning + safe tokens", testTranscriptCleanerSafety)
         await suite.run("Dictation context + prompt biasing args", testDictationContext)
+        await suite.run("Audio input prefers built-in over Bluetooth", testAudioInputPrefersBuiltInOverBluetooth)
         await suite.run("Polish guardrail accepts faithful, rejects divergent", testPolishGuardrail)
         await suite.run("Polish preservesContentWords: rejects fabrication, allows fillers/ellipsis", testPolishPreservesContentWords)
         await suite.run("Polish request body + response parsing", testPolishRequestAndParsing)
@@ -365,6 +366,49 @@ private func testDictationContext() throws {
         throw AssertionFailure(description: "args missing --prompt")
     }
     try expect(args[i + 1] == "bias terms", "prompt value should follow --prompt")
+}
+
+private struct StubInputDevice: AudioInputDeviceInfo {
+    let deviceID: UInt32
+    let uid: String
+    let isBluetooth: Bool
+    let isBuiltIn: Bool
+}
+
+private func testAudioInputPrefersBuiltInOverBluetooth() throws {
+    let builtIn = StubInputDevice(deviceID: 1, uid: "builtin", isBluetooth: false, isBuiltIn: true)
+    let bt = StubInputDevice(deviceID: 2, uid: "buds", isBluetooth: true, isBuiltIn: false)
+    let usb = StubInputDevice(deviceID: 3, uid: "usb", isBluetooth: false, isBuiltIn: false)
+
+    // System Default + the OS default is Bluetooth + a built-in exists → built-in.
+    try expect(
+        AudioInputSelection.choose(uid: "", devices: [builtIn, bt], systemDefaultID: 2) == 1,
+        "should override a Bluetooth default with the built-in mic"
+    )
+
+    // Explicitly chosen Bluetooth device is honored (user asked for it).
+    try expect(
+        AudioInputSelection.choose(uid: "buds", devices: [builtIn, bt], systemDefaultID: 2) == 2,
+        "an explicit Bluetooth choice must be respected"
+    )
+
+    // Default is Bluetooth but no built-in present → no override (use default).
+    try expect(
+        AudioInputSelection.choose(uid: "", devices: [bt, usb], systemDefaultID: 2) == nil,
+        "no built-in → leave the engine on its default"
+    )
+
+    // Default is not Bluetooth → no override.
+    try expect(
+        AudioInputSelection.choose(uid: "", devices: [builtIn, usb], systemDefaultID: 3) == nil,
+        "a non-Bluetooth default needs no override"
+    )
+
+    // Saved device gone + Bluetooth default + built-in present → fall back to built-in.
+    try expect(
+        AudioInputSelection.choose(uid: "ghost", devices: [builtIn, bt], systemDefaultID: 2) == 1,
+        "a missing saved device falls back through the built-in preference"
+    )
 }
 
 private func testTranscriptCleanerBasics() throws {

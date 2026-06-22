@@ -98,7 +98,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
 
         let input = engine.inputNode
         let deviceUID = AppSettingsSnapshot.current.inputDeviceUID
-        if let deviceID = AudioDevices.deviceID(forUID: deviceUID), let unit = input.audioUnit {
+        if let deviceID = AudioDevices.resolveInputDeviceID(forUID: deviceUID), let unit = input.audioUnit {
             var value = deviceID
             AudioUnitSetProperty(
                 unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,

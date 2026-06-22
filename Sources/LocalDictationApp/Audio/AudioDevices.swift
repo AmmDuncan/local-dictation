@@ -1,10 +1,20 @@
 import CoreAudio
 import Foundation
+import LocalDictationCore
 
-struct AudioInputDevice: Identifiable, Hashable {
+struct AudioInputDevice: Identifiable, Hashable, AudioInputDeviceInfo {
     let id: AudioDeviceID
     let uid: String
     let name: String
+    /// Core Audio transport (`kAudioDeviceTransportType…`), used to prefer the
+    /// built-in mic over a Bluetooth one when following the system default.
+    var transport: UInt32 = 0
+
+    var deviceID: UInt32 { id }
+    var isBluetooth: Bool {
+        transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+    }
+    var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
 }
 
 /// Enumerates Core Audio input devices and resolves a stable device UID back to
@@ -32,13 +42,37 @@ enum AudioDevices {
                 return nil
             }
             let uid = stringProperty(id, kAudioDevicePropertyDeviceUID) ?? ""
-            return AudioInputDevice(id: id, uid: uid, name: name)
+            let transport = uint32Property(id, kAudioDevicePropertyTransportType) ?? 0
+            return AudioInputDevice(id: id, uid: uid, name: name, transport: transport)
         }
     }
 
     static func deviceID(forUID uid: String) -> AudioDeviceID? {
         guard !uid.isEmpty else { return nil }
         return inputDevices().first { $0.uid == uid }?.id
+    }
+
+    /// The OS default input device, or nil if none.
+    static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr,
+              deviceID != 0 else {
+            return nil
+        }
+        return deviceID
+    }
+
+    /// Resolve the input device to bind, applying the built-in-over-Bluetooth
+    /// preference (see `AudioInputSelection`). Returns nil to mean "leave the
+    /// engine on its own default".
+    static func resolveInputDeviceID(forUID uid: String) -> AudioDeviceID? {
+        AudioInputSelection.choose(uid: uid, devices: inputDevices(), systemDefaultID: defaultInputDeviceID())
     }
 
     private static func hasInputStreams(_ id: AudioDeviceID) -> Bool {
@@ -60,6 +94,20 @@ enum AudioDevices {
 
         let list = UnsafeMutableAudioBufferListPointer(data.assumingMemoryBound(to: AudioBufferList.self))
         return list.contains { $0.mNumberChannels > 0 }
+    }
+
+    private static func uint32Property(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> UInt32? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else {
+            return nil
+        }
+        return value
     }
 
     private static func stringProperty(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String? {
