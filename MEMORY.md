@@ -1,5 +1,11 @@
 # Local Dictation Memory
 
+## SHIPPED (2026-06-22) — Hold+toggle shortcuts & steadier preview RELEASED as v0.4.5
+- Branch ff-merged to **main @ `ccbb35c`**; **release v0.4.5** (build 57) published (Latest) — dmg + zip + signed Sparkle appcast; auto-update live.
+- WHAT `ccbb35c` **feat(dictation)** — (1) **Two independent dictation shortcuts**: mode is now chosen by WHICH key you press. New `toggleDictate` (tap to start/stop) alongside `holdToDictate` (hold to talk); set either/both in General. Retired the Activation picker + the whole `activationMode` setting (key/enum/field/Defaults), with a one-time migration (`didMigrateActivationShortcut`) that moves existing toggle-mode users' key onto `toggleDictate` and clears the hold one. MenuBar status line shows whichever is set. (2) **Steadier live preview**: was cycling through whisper's phantom phrases on a silent hold. Recorder now tracks recent speech (`hadSpeechRecently`, level > 0.3 = above ambient ~0.2, below speech ~0.5); preview loop refreshes only when speech arrived recently, else holds last text. `speechLevelThreshold` is the tunable knob if live testing wants it lower/higher.
+- ALSO `f024cf5` draft-eyebrow → transcript gap tightened 10→4pt.
+- VERIFIED mic-less: 65 Core tests pass; `swift build` + `build-app.sh` green. **Live mic still pending** (shortcuts + preview threshold want a real hold to confirm; threshold 0.3 is a first guess). v0.4.5 installed at /Applications.
+
 ## SHIPPED (2026-06-22) — Draft-preview cue RELEASED as v0.4.4
 - Branch ff-merged to **main @ `2fcf8a7`**; **release v0.4.4** (build 55) published (Latest) — dmg + zip + signed Sparkle appcast; auto-update live. Tag → `2fcf8a7`.
 - WHAT `2fcf8a7` **feat(overlay)** — the live preview overlay now shows a **"Draft · refining…" eyebrow** above the rolling transcript. The preview is a fast ~900ms partial (Whisper + cleanup only); the final insertion re-transcribes the full audio and runs the correction pipeline (mishearing/command fixes → AI polish → text replacements → smart spacing), so the text changes on release. The eyebrow makes that change read as expected, not a glitch. Listening card height bumped 204→226 for the row.
