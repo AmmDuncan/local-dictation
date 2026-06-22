@@ -53,6 +53,12 @@ final class AppModel {
     private enum PendingEnd { case none, finish, cancel }
 
     init() {
+        // Kill any helper servers left over from a previous run that exited without
+        // cleanup (force-quit, crash, or a diagnostic exit()). Runs before warm-up
+        // so stale orphans die before fresh servers start. Scoped to this bundle's
+        // Helpers dir — never touches a Homebrew whisper-server/llama-server.
+        Self.reapOrphanedHelpers()
+
         KeyboardShortcuts.onKeyDown(for: .holdToDictate) { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -101,8 +107,8 @@ final class AppModel {
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.serverManager.stop()
-                self?.llamaManager.stop()
+                self?.serverManager.shutdown()
+                self?.llamaManager.shutdown()
             }
         }
 
@@ -125,6 +131,12 @@ final class AppModel {
         if let wav = ProcessInfo.processInfo.environment["LD_PIPELINE_TEST"] {
             Task { @MainActor in await self.runPipelineTest(wavPath: wav) }
         }
+    }
+
+    /// Sweep away orphaned helper servers from this app bundle's Helpers dir.
+    private static func reapOrphanedHelpers() {
+        let helpersDir = Bundle.main.bundlePath + "/Contents/Helpers"
+        HelperProcessReaper.reap(helpersDir: helpersDir)
     }
 
     /// Run a WAV through the real dictation pipeline with no microphone — same
@@ -163,6 +175,9 @@ final class AppModel {
         """
         let out = env["LD_PIPELINE_OUT"] ?? "/tmp/ld-pipeline-out.txt"
         try? line.write(toFile: out, atomically: true, encoding: .utf8)
+        // exit() skips willTerminate, so tear the server down explicitly — else the
+        // test campaign leaks a resident whisper-server per run.
+        serverManager.shutdown()
         exit(0)
     }
 

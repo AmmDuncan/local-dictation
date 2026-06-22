@@ -98,6 +98,23 @@ final class ResidentServerManager {
         isReady = false
     }
 
+    /// Terminate the child and wait briefly for it to actually exit, escalating to
+    /// SIGKILL if it doesn't. Use on app termination: `stop()`'s SIGTERM is async,
+    /// so if the app exits first the signal can be lost and the child orphaned.
+    func shutdown() {
+        if let proc = process, proc.isRunning {
+            proc.terminate()
+            let deadline = Date().addingTimeInterval(1)
+            while proc.isRunning, Date() < deadline {
+                usleep(50_000)
+            }
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+            }
+        }
+        stop()
+    }
+
     private func start(modelPath newModel: String, executablePath: String) {
         stop()
         modelPath = newModel

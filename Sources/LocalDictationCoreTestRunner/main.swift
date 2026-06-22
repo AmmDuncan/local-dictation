@@ -68,8 +68,62 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
         await suite.run("Recognition prompt merges default vocabulary", testDefaultVocabularyMerge)
         await suite.run("TranscriptionError userMessage is jargon-free", testTranscriptionErrorUserMessage)
+        await suite.run("HelperReaper matches bundle Helpers path only", testHelperReaperPathMatching)
+        await suite.run("HelperReaper reaps orphan under Helpers dir, spares others", testHelperReaperReapsOrphanOnly)
         suite.finish()
     }
+}
+
+private func testHelperReaperPathMatching() throws {
+    let dir = "/Applications/LocalDictation.app/Contents/Helpers"
+    try expect(HelperProcessReaper.isBundledHelper(executablePath: dir + "/whisper-server", helpersDir: dir),
+               "bundled whisper-server should match")
+    try expect(HelperProcessReaper.isBundledHelper(executablePath: dir + "/llama-server", helpersDir: dir),
+               "bundled llama-server should match")
+    try expect(!HelperProcessReaper.isBundledHelper(executablePath: dir + "/whisper-cli", helpersDir: dir),
+               "whisper-cli is not a server, must not match")
+    try expect(!HelperProcessReaper.isBundledHelper(executablePath: "/opt/homebrew/bin/whisper-server", helpersDir: dir),
+               "Homebrew whisper-server must never match")
+    try expect(!HelperProcessReaper.isBundledHelper(executablePath: dir + "-evil/whisper-server", helpersDir: dir),
+               "sibling dir with shared prefix must not match")
+}
+
+private func testHelperReaperReapsOrphanOnly() throws {
+    let fm = FileManager.default
+    let base = NSTemporaryDirectory() + "ld-reaper-\(getpid())"
+    let helpers = base + "/Contents/Helpers"
+    try fm.createDirectory(atPath: helpers, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: base) }
+
+    let fakeHelper = helpers + "/whisper-server"
+    try fm.copyItem(atPath: "/bin/sleep", toPath: fakeHelper)
+
+    // The orphan: a "helper" living under our Helpers dir.
+    let orphan = Process()
+    orphan.executableURL = URL(fileURLWithPath: fakeHelper)
+    orphan.arguments = ["30"]
+    try orphan.run()
+    // A control process that must survive — same binary, different path.
+    let control = Process()
+    control.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    control.arguments = ["30"]
+    try control.run()
+    defer { control.terminate() }
+
+    usleep(250_000)  // let both appear in the process table
+
+    let orphans = HelperProcessReaper.orphanPIDs(helpersDir: helpers)
+    try expect(orphans.contains(orphan.processIdentifier), "orphan helper should be detected")
+    try expect(!orphans.contains(control.processIdentifier), "control /bin/sleep must not be detected")
+
+    // `keeping` excludes a live PID even when it matches the path.
+    let kept = HelperProcessReaper.orphanPIDs(helpersDir: helpers, keeping: [orphan.processIdentifier])
+    try expect(!kept.contains(orphan.processIdentifier), "keeping should exclude our own child")
+
+    HelperProcessReaper.reap(helpersDir: helpers)
+    usleep(500_000)
+    try expect(!orphan.isRunning, "orphan should be killed")
+    try expect(control.isRunning, "control must still be running")
 }
 
 private struct TestSuite {
