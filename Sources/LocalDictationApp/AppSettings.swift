@@ -150,8 +150,8 @@ struct AppSettingsSnapshot: Equatable {
         static let showOverlay = true
         static let inputDeviceUID = ""  // empty = system default input
         static let cleanUpTranscript = true
-        static let polishWithAI = false  // opt-in: needs the ~1.8GB model + resident llama-server
-        static let polishModelPath = "~/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+        static let polishWithAI = false  // opt-in: needs the ~3GB model + resident llama-server
+        static let polishModelPath = "~/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf"
         static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
         static let useDefaultVocabulary = true  // bias toward common terms (Claude, GitHub, …)
         // Use the focused app + caret-preceding text to bias recognition and enable

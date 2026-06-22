@@ -20,7 +20,7 @@ struct ModelsTab: View {
             } header: {
                 Text("Polish (AI cleanup)")
             } footer: {
-                Text("Used only when “Polish with AI” is on (General tab). Runs locally via llama-server. Qwen 2.5-3B is recommended.")
+                Text("Used only when “Polish with AI” is on (General tab). Runs locally via llama-server. Qwen 3.5-4B is recommended.")
             }
         }
         .formStyle(.grouped)

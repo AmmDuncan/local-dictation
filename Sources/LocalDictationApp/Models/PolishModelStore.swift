@@ -18,30 +18,22 @@ struct PolishModel: Identifiable, Hashable, DownloadableModel {
 }
 
 enum PolishModelCatalog {
-    /// Curated polish models. Qwen 2.5-3B is the recommended default — it's the
-    /// smallest that reliably follows the cleanup/corrector prompt and stops
-    /// cleanly. Gemma 3 4B is offered as an alternative (it over-corrects more in
-    /// Corrector mode; fine for the other modes).
+    /// Curated polish models. Qwen 3.5-4B is the recommended default — current-gen,
+    /// follows the cleanup/corrector prompt faithfully (validated in a head-to-head:
+    /// it polished thoroughly without the over-formatting/wrong-substitutions the
+    /// alternatives showed). NOTE: Qwen3-family is hybrid-thinking — its `<think>`
+    /// blocks would pollute the polish + trip the faithfulness guard, so the request
+    /// body disables thinking (see `TranscriptPolisher.chatRequestBody`).
     static let all: [PolishModel] = [
         PolishModel(
-            id: "qwen2.5-3b",
-            displayName: "Qwen 2.5 3B Instruct",
-            filename: "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
-            sizeBytes: 1_929_903_264,
-            sha256: "9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94",
-            url: URL(string: "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf")!,
+            id: "qwen3.5-4b",
+            displayName: "Qwen 3.5 4B",
+            filename: "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+            sizeBytes: 3_013_027_808,
+            sha256: "13c16f426047e2de38cd075bdade4a7bcbc8c774384876f677740cda65f8a983",
+            url: URL(string: "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q4_K_M.gguf")!,
             note: "Recommended",
-            detail: "Fast · best-tested for cleanup & correction"
-        ),
-        PolishModel(
-            id: "gemma-3-4b",
-            displayName: "Gemma 3 4B Instruct",
-            filename: "gemma-3-4b-it-Q4_K_M.gguf",
-            sizeBytes: 2_489_757_856,
-            sha256: "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
-            url: URL(string: "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf")!,
-            note: nil,
-            detail: "Newer knowledge · over-corrects more in Corrector mode"
+            detail: "Current-gen · sharp intent · thinking auto-disabled for faithful polish"
         ),
     ]
 }

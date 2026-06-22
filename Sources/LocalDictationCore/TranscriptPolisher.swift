@@ -49,6 +49,11 @@ public enum TranscriptPolisher {
             "messages": messages,
             "temperature": temperature,
             "stream": false,
+            // Qwen3-family models default to a "thinking" mode whose <think> blocks
+            // would pollute the polished text and trip the faithfulness guard. Disable
+            // it via the chat-template kwarg; templates that don't define it (Qwen2.5,
+            // Gemma) ignore the extra kwarg, so it's harmless across the catalog.
+            "chat_template_kwargs": ["enable_thinking": false],
         ]
         return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
     }
