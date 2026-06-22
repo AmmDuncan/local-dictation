@@ -175,10 +175,12 @@ struct OverlayView: View {
             // The live text is a fast partial; the final insertion re-transcribes
             // and runs corrections/polish, so it can differ. Mark it as a draft
             // so the change on release reads as expected, not a glitch.
-            if !state.detail.isEmpty {
-                draftEyebrow
+            VStack(alignment: .leading, spacing: 4) {
+                if !state.detail.isEmpty {
+                    draftEyebrow
+                }
+                TailingTranscript(text: state.detail, ink: ink, inkDim: inkDim)
             }
-            TailingTranscript(text: state.detail, ink: ink, inkDim: inkDim)
         }
     }
 
