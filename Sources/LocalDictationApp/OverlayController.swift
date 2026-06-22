@@ -48,7 +48,7 @@ final class OverlayController {
     /// Visible card height per phase. The panel adds `shadowMargin` top + bottom.
     private func cardHeight(for phase: DictationPhase) -> CGFloat {
         switch phase {
-        case .listening: 204  // taller for the 3-line tailing transcript
+        case .listening: 226  // taller for the 3-line tailing transcript + draft eyebrow
         case .transcribing: 130
         case .done: 220
         case .error: 194

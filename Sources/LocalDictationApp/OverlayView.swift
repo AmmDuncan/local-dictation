@@ -167,12 +167,31 @@ struct OverlayView: View {
     }
 
     private var listeningBody: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             WaveBars(level: state.level)
                 .frame(height: 60)
                 .frame(maxWidth: .infinity)
+                .padding(.bottom, 6)
+            // The live text is a fast partial; the final insertion re-transcribes
+            // and runs corrections/polish, so it can differ. Mark it as a draft
+            // so the change on release reads as expected, not a glitch.
+            if !state.detail.isEmpty {
+                draftEyebrow
+            }
             TailingTranscript(text: state.detail, ink: ink, inkDim: inkDim)
         }
+    }
+
+    private var draftEyebrow: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "pencil.and.outline")
+                .font(.system(size: 9, weight: .semibold))
+            Text("Draft · refining…")
+                .font(.system(size: 10, weight: .semibold))
+                .textCase(.uppercase)
+                .kerning(0.6)
+        }
+        .foregroundStyle(inkDim)
     }
 
     private var transcribingBody: some View {
