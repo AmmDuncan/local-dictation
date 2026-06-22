@@ -11,8 +11,12 @@ struct AudioTab: View {
 
     var body: some View {
         Form {
-            Section("Microphone") {
+            Section {
                 AudioInputSection(deviceUID: $deviceUID, isActive: isActive)
+            } header: {
+                Text("Microphone")
+            } footer: {
+                Text("“System Default” follows macOS but prefers your built-in mic over Bluetooth — a Bluetooth mic forces call mode (lower quality, slow to start). Pick a device above to override.")
             }
         }
         .formStyle(.grouped)

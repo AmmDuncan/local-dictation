@@ -18,14 +18,22 @@ struct AudioInputSection: View {
             }
         }
 
-        LabeledContent("Input level") {
+        Group {
             if micAuthorized {
-                LevelMeterBar(level: meter.level)
-                    .frame(height: 18)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Input level")
+                    LevelMeterBar(level: meter.level)
+                        .frame(height: 26)
+                    Text("Speak to test — aim for the green range")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
-                Text("Available once microphone access is granted")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                LabeledContent("Input level") {
+                    Text("Available once microphone access is granted")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .onAppear {
@@ -94,6 +102,6 @@ private struct LevelMeterBar: View {
         if index >= barCount - 5 {
             return .yellow
         }
-        return .green
+        return Brand.emerald
     }
 }

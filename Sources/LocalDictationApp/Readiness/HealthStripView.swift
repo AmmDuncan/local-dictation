@@ -7,7 +7,7 @@ struct HealthStripView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: readiness.allReady ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(readiness.allReady ? .green : .orange)
+                    .foregroundStyle(readiness.allReady ? Brand.emerald : Color.orange)
                 Text(readiness.allReady ? "Ready to dictate" : "Setup needed")
                     .font(.headline)
             }
@@ -33,7 +33,11 @@ struct HealthStripView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill((readiness.allReady ? Color.green : Color.orange).opacity(0.10))
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(readiness.allReady ? Brand.emerald.opacity(0.25) : Color.orange.opacity(0.35))
         )
     }
 
@@ -66,7 +70,7 @@ struct HealthStripView: View {
 
     private func tint(_ state: ReadinessState) -> Color {
         switch state {
-        case .ok: .green
+        case .ok: Brand.emerald
         case .warn: .orange
         case .fail: .red
         }

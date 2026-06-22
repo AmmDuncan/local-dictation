@@ -83,6 +83,7 @@ struct SettingsView: View {
             .tag(SettingsTab.learn)
         }
         .frame(width: 560, height: 580)
+        .tint(Brand.emerald)
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refresh()

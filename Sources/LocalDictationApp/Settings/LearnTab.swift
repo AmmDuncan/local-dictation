@@ -81,33 +81,37 @@ struct LearnTab: View {
             }
 
             Section {
-                ForEach(builtIns(.mishearing)) { entry in
-                    Toggle(isOn: builtInBinding(entry)) {
-                        ruleLabel(from: entry.from, to: entry.to)
+                DisclosureGroup {
+                    ForEach(builtIns(.mishearing)) { entry in
+                        Toggle(isOn: builtInBinding(entry)) {
+                            ruleLabel(from: entry.from, to: entry.to)
+                        }
                     }
+                } label: {
+                    builtInDisclosureLabel("Mishearings", count: builtIns(.mishearing).count)
                 }
-            } header: {
-                Text("Mishearings")
             } footer: {
                 Text("Built-in fixes for commonly misheard words — applied everywhere. Turn off any you don't want.")
             }
 
             Section {
-                ForEach(builtIns(.command)) { entry in
-                    Toggle(isOn: builtInBinding(entry)) {
-                        ruleLabel(from: entry.from, to: entry.to)
+                DisclosureGroup {
+                    ForEach(builtIns(.command)) { entry in
+                        Toggle(isOn: builtInBinding(entry)) {
+                            ruleLabel(from: entry.from, to: entry.to)
+                        }
                     }
+                } label: {
+                    builtInDisclosureLabel("Command mode (terminal git)", count: builtIns(.command).count)
                 }
-            } header: {
-                Text("Command mode (terminal git)")
             } footer: {
                 Text("Applied only inside a terminal when you're typing a git command — “main” is often misheard as “me”. Left alone everywhere else.")
             }
 
             Section {
-                Toggle("Replace the current text when I fix it (experimental)", isOn: $liveReinsertionEnabled)
-            } header: {
-                Text("Experimental")
+                Toggle(isOn: $liveReinsertionEnabled) {
+                    ExperimentalLabel("Replace the current text when I fix it")
+                }
             } footer: {
                 Text("When you fix a dictation right after speaking it (⌥Z), also replace the text already typed — not just learn for next time. Best-effort: only in apps that support it, and only if you haven't moved the cursor. Off by default.")
             }
@@ -119,6 +123,16 @@ struct LearnTab: View {
                 reviewing = nil
                 reload()
             })
+        }
+    }
+
+    private func builtInDisclosureLabel(_ title: String, count: Int) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text("\(count) fixes")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -140,8 +154,8 @@ struct LearnTab: View {
                     Text("\(record.changeCount) change\(record.changeCount == 1 ? "" : "s")")
                         .font(.caption2)
                         .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green.opacity(0.15)))
-                        .foregroundStyle(.green)
+                        .background(Capsule().fill(Brand.emerald.opacity(0.15)))
+                        .foregroundStyle(Brand.emerald)
                 }
                 Button { CorrectionLogStore.delete(id: record.id); reload() } label: {
                     Image(systemName: "trash")

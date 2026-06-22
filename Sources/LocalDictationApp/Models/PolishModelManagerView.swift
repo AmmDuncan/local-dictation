@@ -34,10 +34,10 @@ private struct PolishModelRow: View {
                         Text(note)
                             .font(.caption2)
                             .fontWeight(.bold)
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(Brand.emerald)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                            .background(Capsule().fill(Brand.emerald.opacity(0.15)))
                     }
                 }
                 Text("\(model.sizeLabel) · \(model.detail)")
@@ -61,7 +61,7 @@ private struct PolishModelRow: View {
         if store.isActive(model) {
             Label("Active", systemImage: "checkmark.circle.fill")
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(Brand.emerald)
         } else if let progress = store.progress[model.id] {
             HStack(spacing: 8) {
                 ProgressView(value: progress)

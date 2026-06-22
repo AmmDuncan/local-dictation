@@ -38,8 +38,10 @@ struct GeneralTab: View {
                         .help("Show a floating panel with your words as you speak.")
                     Toggle("Clean up dictation", isOn: $cleanUpTranscript)
                         .help("Before typing, remove filler words (um, uh) and fix capitalization & spacing. Never changes your wording.")
-                    Toggle("Polish with AI (experimental)", isOn: $polishWithAI)
-                        .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, fillers, and misheard names/terms — using your vocabulary (e.g. \"clot\" → \"Claude\"). Keeps a resident process (extra RAM). All on-device.")
+                    Toggle(isOn: $polishWithAI) {
+                        ExperimentalLabel("Polish with AI")
+                    }
+                    .help("Run a small on-device model (Qwen 3B) to fix punctuation, capitalization, fillers, and misheard names/terms — using your vocabulary (e.g. \"clot\" → \"Claude\"). Keeps a resident process (extra RAM). All on-device.")
 
                     if polishWithAI {
                         polishModelRow
@@ -71,7 +73,7 @@ struct GeneralTab: View {
         if polishStore.activeModelInstalled {
             Label("Polish model: \(polishStore.activeModelName)", systemImage: "checkmark.circle.fill")
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(Brand.emerald)
         } else {
             Text("No polish model installed — choose & download one in the Models tab.")
                 .font(.caption)

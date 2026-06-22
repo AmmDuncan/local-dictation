@@ -32,15 +32,18 @@ private struct ModelRow: View {
                         Text(note)
                             .font(.caption2)
                             .fontWeight(.bold)
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(Brand.emerald)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                            .background(Capsule().fill(Brand.emerald.opacity(0.15)))
                     }
                 }
-                Text("\(model.sizeLabel) · \(model.speed) · \(model.accuracy) · \(model.language)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    metaChip(model.sizeLabel)
+                    metaChip(model.speed)
+                    metaChip(model.accuracy)
+                    metaChip(model.language)
+                }
                 if let error = store.errors[model.id] {
                     Text(error)
                         .font(.caption)
@@ -54,12 +57,21 @@ private struct ModelRow: View {
         }
     }
 
+    private func metaChip(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.12)))
+    }
+
     @ViewBuilder
     private var control: some View {
         if store.isActive(model) {
             Label("Active", systemImage: "checkmark.circle.fill")
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(Brand.emerald)
         } else if let progress = store.progress[model.id] {
             HStack(spacing: 8) {
                 ProgressView(value: progress)

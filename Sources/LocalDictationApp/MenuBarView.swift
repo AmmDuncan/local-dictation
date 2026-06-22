@@ -28,14 +28,28 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Dictation History…") { openHistoryWindow() }
-            Button("Check for Updates…") { updater.checkForUpdates() }
-                .disabled(!updater.canCheckForUpdates)
+            // Full-width menu rows (not bordered buttons) so the popover reads as
+            // a menu, and tinted with Brand emerald to match the dictation HUD.
+            menuGroup {
+                MenuRow(title: "Dictation History…", systemImage: "clock.arrow.circlepath") {
+                    openHistoryWindow()
+                }
+                MenuRow(title: "Check for Updates…",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        disabled: !updater.canCheckForUpdates) {
+                    updater.checkForUpdates()
+                }
+            }
 
-            HStack {
-                Button("Settings") { openSettingsWindow() }
-                Spacer()
-                Button("Quit") { NSApplication.shared.terminate(nil) }
+            Divider()
+
+            menuGroup {
+                MenuRow(title: "Settings…", systemImage: "gearshape", shortcut: "⌘,") {
+                    openSettingsWindow()
+                }
+                MenuRow(title: "Quit", systemImage: "power", shortcut: "⌘Q") {
+                    NSApplication.shared.terminate(nil)
+                }
             }
         }
         .padding(16)
@@ -71,17 +85,40 @@ struct MenuBarView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: model.isRecording ? "record.circle.fill" : "mic.circle")
-                .font(.system(size: 28))
-                .foregroundStyle(model.isRecording ? .red : .accentColor)
+        HStack(spacing: 11) {
+            Image(systemName: model.isRecording ? "record.circle.fill" : "mic.circle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(model.isRecording ? AnyShapeStyle(.red) : AnyShapeStyle(Brand.signal))
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.status)
+                Text("Local Dictation")
                     .font(.headline)
-                Text(shortcutLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(model.status)
+                        .foregroundStyle(statusColor)
+                        .fontWeight(.medium)
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(shortcutLabel)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption)
             }
+        }
+    }
+
+    /// A tight stack of menu rows whose hover highlight bleeds slightly toward the
+    /// popover edges (negative inset) while the row text stays aligned with the header.
+    @ViewBuilder
+    private func menuGroup<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 2) { content() }
+            .padding(.horizontal, -10)
+    }
+
+    private var statusColor: Color {
+        switch model.status {
+        case "Inserted": Brand.emerald
+        case "Error": .red
+        case "Listening", "Transcribing": .primary
+        default: .secondary
         }
     }
 
@@ -124,5 +161,51 @@ struct MenuBarView: View {
         NSApp.setActivationPolicy(.regular)
         openWindow(id: "history")
         NSApp.activate()
+    }
+}
+
+/// A full-width, left-aligned menu row with a leading SF Symbol and an emerald
+/// hover highlight — the popover's menu items, styled to match the dictation HUD
+/// rather than rendering as default bordered buttons.
+private struct MenuRow: View {
+    let title: String
+    let systemImage: String
+    var shortcut: String? = nil
+    var disabled = false
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    private var highlighted: Bool { hovering && !disabled }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13))
+                    .frame(width: 16)
+                Text(title)
+                Spacer(minLength: 8)
+                if let shortcut {
+                    Text(shortcut)
+                        .foregroundStyle(highlighted ? Brand.onSignal.opacity(0.75) : Color.secondary)
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(highlighted ? Brand.onSignal : .primary)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Brand.signal)
+                    .opacity(highlighted ? 1 : 0)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
+        .onHover { hovering = $0 }
     }
 }
