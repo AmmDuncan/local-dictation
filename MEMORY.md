@@ -1,5 +1,14 @@
 # Local Dictation Memory
 
+## SHIPPED (2026-06-22) — Draft-preview cue RELEASED as v0.4.4
+- Branch ff-merged to **main @ `2fcf8a7`**; **release v0.4.4** (build 55) published (Latest) — dmg + zip + signed Sparkle appcast; auto-update live. Tag → `2fcf8a7`.
+- WHAT `2fcf8a7` **feat(overlay)** — the live preview overlay now shows a **"Draft · refining…" eyebrow** above the rolling transcript. The preview is a fast ~900ms partial (Whisper + cleanup only); the final insertion re-transcribes the full audio and runs the correction pipeline (mishearing/command fixes → AI polish → text replacements → smart spacing), so the text changes on release. The eyebrow makes that change read as expected, not a glitch. Listening card height bumped 204→226 for the row.
+- NOTE on the preview/final divergence (Ammiel asked): two separate processors by design — preview = speed, final = quality+corrections. Considered applying deterministic corrections to the preview too; chose the lighter "mark as draft" treatment instead.
+- DEFERRED follow-ups (Ammiel "not ready" / parked): polish pass could fix article errors ("a"↔"the") + terminal "?" from grammar (both are inherent Whisper limits, not bugs — Whisper keys on grammar not intonation); aligning preview text with deterministic corrections.
+
+## SHIPPED (2026-06-22) — Orphaned-helper reap RELEASED as v0.4.3 (another agent)
+- `6339029` **fix(servers)** — reap orphaned whisper/llama helper servers on launch + hard shutdown on quit. Fixes the leak filed this session (helpers orphaned to launchd on quit; ~18 had piled up saturating the GPU → multi-second dictation lag). Adds `HelperReaper` (+2 Core tests → 65 total). Cut by the background task agent spawned earlier. v0.4.4 rebased on top of this.
+
 ## SHIPPED (2026-06-22) — UI revamp + built-in-mic preference RELEASED as v0.4.2
 - Branch ff-merged to **main @ `2772517`**; **release v0.4.2** (build 52) published (Latest) — dmg + zip + signed Sparkle appcast; auto-update live. Tag → `2772517`.
 - WHAT (two commits): **fix(audio)** `2772517` — "System Default" input now **prefers the built-in mic over Bluetooth** (BT mic = HFP/SCO call mode, slow/unreliable SCO negotiation → "System Default" + earbuds captured nothing). Pure policy `AudioInputSelection.choose` (Core, unit-tested, 63 tests); `AudioDevices.resolveInputDeviceID` reads CoreAudio transport + OS default; used by recorder + level meter. An **explicit device pick is still respected**. Also: **level meter now recreates its `AVAudioEngine` per start** — `kAudioOutputUnitProperty_CurrentDevice` only binds on an *uninitialized* HAL unit (the recorder already did this; the meter didn't, which is why explicit-built-in "worked" only because it coincided with the system default during testing).
