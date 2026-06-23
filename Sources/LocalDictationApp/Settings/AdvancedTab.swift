@@ -12,6 +12,7 @@ struct AdvancedTab: View {
     @Binding var smartSpacing: Bool
     @Binding var useTextReplacements: Bool
     @Binding var textReplacements: String
+    @AppStorage(AppSettingsKeys.crashReportingEnabled) private var crashReportingEnabled = false
 
     var body: some View {
         Form {
@@ -62,6 +63,15 @@ struct AdvancedTab: View {
                 Text("Text replacements")
             } footer: {
                 Text("One rule per line, e.g. `teh => the` or `my address => 12 Oak Street`. Whole-word, case-insensitive; applied after transcription. Distinct from vocabulary (which biases recognition).")
+            }
+
+            Section {
+                Toggle("Send crash reports to the developer", isOn: $crashReportingEnabled)
+                    .help("If LocalDictation crashes, send the macOS crash report (app version, your macOS version, and a technical backtrace — never your dictation text, audio, or transcripts) so it can be fixed. Uploaded on the next launch after a crash.")
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("You can also grab the latest report yourself from the menu-bar icon → Copy Last Crash Report.")
             }
 
             Section {

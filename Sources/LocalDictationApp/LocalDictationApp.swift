@@ -151,6 +151,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Point the bundled whisper-cli at its bundled ggml backend plugins.
         WhisperLocator.ensureBackendsLinked()
 
+        // Surface any macOS crash report from a previous run — prompts once for
+        // consent, then uploads to the crash collector. Best-effort, non-blocking.
+        CrashReporter.checkForReports()
+
         // Accessibility is requested in-context the first time the user dictates
         // (see AppModel.beginHold) — not on cold launch, which reads as spyware.
 

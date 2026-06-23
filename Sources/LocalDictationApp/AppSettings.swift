@@ -23,6 +23,9 @@ enum AppSettingsKeys {
     static let rejectedBuiltInSwaps = "rejectedBuiltInSwaps"
     static let liveReinsertionEnabled = "liveReinsertionEnabled"
     static let logCorrections = "logCorrections"
+    // Crash reporting (handled by CrashReporter, not the dictation snapshot).
+    static let crashReportingEnabled = "crashReportingEnabled"
+    static let crashReportConsentAsked = "crashReportConsentAsked"
 }
 
 /// How transcribed text reaches the cursor.

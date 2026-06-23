@@ -6,6 +6,7 @@ struct MenuBarView: View {
     @ObservedObject var updater: UpdaterModel
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @State private var hasCrashReport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -39,6 +40,11 @@ struct MenuBarView: View {
                         disabled: !updater.canCheckForUpdates) {
                     updater.checkForUpdates()
                 }
+                if hasCrashReport {
+                    MenuRow(title: "Copy Last Crash Report", systemImage: "ant") {
+                        CrashReporter.copyLatestReport()
+                    }
+                }
             }
 
             Divider()
@@ -54,7 +60,10 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 320, alignment: .leading)
-        .onAppear { model.readiness.refresh() }
+        .onAppear {
+            model.readiness.refresh()
+            hasCrashReport = CrashReporter.hasAnyReport()
+        }
     }
 
     /// A tappable preview of the most recent dictation. Clicking opens Dictation
