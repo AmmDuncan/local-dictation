@@ -319,7 +319,7 @@ struct OverlayView: View {
                     .frame(maxWidth: .infinity)
                     .background(RoundedRectangle(cornerRadius: 14).fill(ink.opacity(0.05)))
                 if !state.swappedRanges.isEmpty {
-                    Text("⌥Z to review")
+                    Text("⌃⌥Z to review")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(inkDim)
                 }
