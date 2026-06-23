@@ -41,20 +41,26 @@ enum CrashReporter {
         guard !pending.isEmpty else { return }
 
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: AppSettingsKeys.crashReportConsentAsked) else {
+        if defaults.bool(forKey: AppSettingsKeys.crashReportConsentAsked) {
+            // Already decided. Upload when enabled; otherwise leave reports
+            // unhandled so they still go up if the user later re-enables (a
+            // handful of files re-scanned each launch is cheap).
+            if defaults.bool(forKey: AppSettingsKeys.crashReportingEnabled) {
+                startUpload(pending)
+            }
+            return
+        }
+
+        // First crash since install: ask once. Deferred to the next runloop tick
+        // so launch finishes and the menu-bar-only app is active enough to present
+        // the modal reliably.
+        DispatchQueue.main.async {
             promptForConsent(reportCount: pending.count) { granted in
                 defaults.set(true, forKey: AppSettingsKeys.crashReportConsentAsked)
                 defaults.set(granted, forKey: AppSettingsKeys.crashReportingEnabled)
                 if granted { startUpload(pending) }
             }
-            return
         }
-
-        if defaults.bool(forKey: AppSettingsKeys.crashReportingEnabled) {
-            startUpload(pending)
-        }
-        // Disabled: leave reports unhandled so they upload if the user later
-        // re-enables. Re-scanning a handful of files each launch is cheap.
     }
 
     // MARK: - Menu fallback
@@ -91,8 +97,14 @@ enum CrashReporter {
         alert.addButton(withTitle: "Send & Remember")
         alert.addButton(withTitle: "Not Now")
         alert.alertStyle = .informational
+        // Flip to a regular app for the modal so it reliably comes forward from a
+        // menu-bar-only (accessory) app, then restore the prior policy.
+        let previousPolicy = NSApp.activationPolicy()
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        completion(alert.runModal() == .alertFirstButtonReturn)
+        let granted = alert.runModal() == .alertFirstButtonReturn
+        NSApp.setActivationPolicy(previousPolicy)
+        completion(granted)
     }
 
     // MARK: - Discovery
