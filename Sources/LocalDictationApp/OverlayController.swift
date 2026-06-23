@@ -6,6 +6,7 @@ import SwiftUI
 enum DictationPhase: Equatable {
     case listening
     case transcribing
+    case reviewSubstitution
     case done
     case error
     case cancelled
@@ -22,6 +23,18 @@ final class OverlayState {
     /// Ranges (UTF-16, in `detail`) of words the system swapped, for the "Typed"
     /// card to flat-underline. Empty unless the `.done` card has reviewable swaps.
     var swappedRanges: [NSRange] = []
+
+    /// Proposed swaps for the .reviewSubstitution phase, with per-swap accepted flag.
+    var pendingSwaps: [PendingSwap] = []
+    var countdownTotal: TimeInterval = 5
+    var countdownRemaining: TimeInterval = 5
+
+    struct PendingSwap: Identifiable, Equatable {
+        let id: Int            // 1-based index = the number key
+        let from: String
+        let to: String
+        var accepted: Bool = true
+    }
 
     @ObservationIgnored var action: (() -> Void)?
 }
@@ -50,6 +63,7 @@ final class OverlayController {
         switch phase {
         case .listening: 226  // taller for the 3-line tailing transcript + draft eyebrow
         case .transcribing: 130
+        case .reviewSubstitution: 260
         case .done: 220
         case .error: 194
         case .cancelled: 120
@@ -89,6 +103,38 @@ final class OverlayController {
         present(phase: .cancelled, title: "Cancelled", detail: "Nothing was typed")
     }
 
+    func showReviewSubstitution(swaps: [OverlayState.PendingSwap], countdown: TimeInterval) {
+        stopLevelUpdates()
+        state.pendingSwaps = swaps
+        state.countdownTotal = countdown
+        state.countdownRemaining = countdown
+        present(phase: .reviewSubstitution, title: "Review swaps before typing", detail: "")
+    }
+
+    /// Mutate the live overlay state for the .reviewSubstitution phase. The
+    /// confirmer ticks the countdown and toggles swaps through these.
+    func updateCountdownRemaining(_ remaining: TimeInterval) {
+        guard state.phase == .reviewSubstitution else { return }
+        state.countdownRemaining = remaining
+    }
+
+    /// Install the closure the "↵ Apply now" button (and ↵ key) invoke.
+    func setReviewApplyAction(_ action: @escaping () -> Void) {
+        guard state.phase == .reviewSubstitution else { return }
+        state.action = action
+    }
+
+    func togglePendingSwap(id: Int) {
+        guard state.phase == .reviewSubstitution,
+              let idx = state.pendingSwaps.firstIndex(where: { $0.id == id }) else { return }
+        state.pendingSwaps[idx].accepted.toggle()
+    }
+
+    /// The swaps still toggled on, in id order.
+    var acceptedPendingSwaps: [OverlayState.PendingSwap] {
+        state.pendingSwaps.filter(\.accepted)
+    }
+
     /// Update the rolling partial transcript without changing phase.
     func updateListeningDetail(_ detail: String) {
         guard state.phase == .listening else { return }
@@ -121,7 +167,7 @@ final class OverlayController {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setContentSize(NSSize(width: panelWidth, height: panelHeight(for: phase)))
-        panel.ignoresMouseEvents = phase != .error
+        panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }

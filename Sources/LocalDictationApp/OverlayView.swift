@@ -126,6 +126,7 @@ struct OverlayView: View {
         switch state.phase {
         case .error: "exclamationmark.triangle.fill"
         case .cancelled: "xmark"
+        case .reviewSubstitution: "sparkles"
         default: "waveform"
         }
     }
@@ -134,6 +135,7 @@ struct OverlayView: View {
         switch state.phase {
         case .listening: "Speak now — I'm hearing you"
         case .transcribing: "Processing your words locally"
+        case .reviewSubstitution: "Confirm before it's typed"
         case .done: "Typed at your cursor"
         case .error: "Can't continue yet"
         case .cancelled: "Discarded — nothing typed"
@@ -147,6 +149,7 @@ struct OverlayView: View {
         switch phase {
         case .listening: listeningBody
         case .transcribing: transcribingBody
+        case .reviewSubstitution: reviewSubstitutionBody
         case .done: doneBody
         case .error: errorBody
         case .cancelled: cancelledBody
@@ -204,6 +207,96 @@ struct OverlayView: View {
                 .frame(height: 3)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: review substitution
+
+    private var reviewSubstitutionBody: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(reviewQuote)
+                .font(.system(size: 14.5))
+                .foregroundStyle(ink)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 14).fill(ink.opacity(0.05)))
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(state.pendingSwaps) { swap in
+                    swapLegendRow(swap)
+                }
+            }
+
+            HStack(spacing: 12) {
+                CountdownRing(
+                    progress: state.countdownTotal > 0 ? state.countdownRemaining / state.countdownTotal : 0,
+                    seconds: state.countdownRemaining
+                )
+                .frame(width: 34, height: 34)
+
+                Text("Applying in \(Int(ceil(state.countdownRemaining)))s")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(inkDim)
+
+                Spacer(minLength: 8)
+
+                Button("↵ Apply now") { state.action?() }
+                    .buttonStyle(SignalButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The transcript reconstructed from the proposed swaps: each swap's target is
+    /// shown emerald-underlined while accepted, struck/dim while toggled off.
+    private var reviewQuote: AttributedString {
+        var result = AttributedString("“")
+        for (idx, swap) in state.pendingSwaps.enumerated() {
+            if idx > 0 { result += AttributedString(" · ") }
+            var chunk = AttributedString(swap.accepted ? swap.to : swap.from)
+            if swap.accepted {
+                chunk.underlineStyle = .single
+                chunk.foregroundColor = Brand.emerald
+            } else {
+                chunk.foregroundColor = inkDim
+            }
+            result += chunk
+        }
+        result += AttributedString("”")
+        return result
+    }
+
+    @ViewBuilder
+    private func swapLegendRow(_ swap: OverlayState.PendingSwap) -> some View {
+        HStack(spacing: 9) {
+            Text("\(swap.id)")
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(ink)
+                .frame(width: 18, height: 18)
+                .background(RoundedRectangle(cornerRadius: 5).fill(ink.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(ink.opacity(0.12)))
+
+            Image(systemName: swap.accepted ? "checkmark" : "arrow.uturn.backward")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(swap.accepted ? Brand.emerald : inkDim)
+                .frame(width: 14)
+
+            HStack(spacing: 5) {
+                Text(swap.from)
+                    .foregroundStyle(inkDim)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(inkDim)
+                Text(swap.to)
+                    .foregroundStyle(swap.accepted ? Brand.emerald : inkDim)
+            }
+            .font(.system(size: 12.5))
+            .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
     }
 
     private var doneBody: some View {
@@ -331,6 +424,30 @@ private struct TailingTranscript: View {
             )
             .animation(.easeOut(duration: 0.16), value: text)  // glide, don't snap
             .accessibilityLabel(isEmpty ? "Listening" : text)
+    }
+}
+
+// MARK: - Countdown ring
+
+/// A circular countdown indicator: an emerald arc that drains clockwise as the
+/// confirm window elapses, with the remaining whole seconds in the center.
+private struct CountdownRing: View {
+    var progress: Double   // 1 -> full, 0 -> empty
+    var seconds: TimeInterval
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Brand.emerald.opacity(0.18), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: max(0, min(1, progress)))
+                .stroke(Brand.emerald, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.1), value: progress)
+            Text("\(Int(ceil(max(0, seconds))))")
+                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Brand.emerald)
+        }
     }
 }
 

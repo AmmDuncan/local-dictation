@@ -432,6 +432,7 @@ private struct OverlayPreview: View {
         switch phase {
         case .listening: "Listening"
         case .transcribing: "Transcribing"
+        case .reviewSubstitution: "Review swaps"
         case .done: "Inserted"
         case .error: "Error"
         case .cancelled: "Cancelled"
