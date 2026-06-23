@@ -72,6 +72,12 @@ struct LocalDictationCoreTestRunner {
         await suite.run("HelperReaper matches bundle Helpers path only", testHelperReaperPathMatching)
         await suite.run("HelperReaper reaps orphan under Helpers dir, spares others", testHelperReaperReapsOrphanOnly)
         await suite.run("Edit.Source.contextSub round-trips", testEditSourceContextSubRoundTrips)
+        await suite.run("guard accepts valid swap", testGuardAcceptsValidSwap)
+        await suite.run("guard accepts compound fix", testGuardAcceptsCompoundFix)
+        await suite.run("guard rejects off-list", testGuardRejectsOffList)
+        await suite.run("guard rejects collapse", testGuardRejectsCollapse)
+        await suite.run("guard rejects pure deletion", testGuardRejectsPureDeletion)
+        await suite.run("guard candidate is case-insensitive", testGuardCaseInsensitiveCandidate)
         suite.finish()
     }
 }
@@ -1645,4 +1651,29 @@ private func testEditSourceContextSubRoundTrips() throws {
     let data = try JSONEncoder().encode(edit)
     let decoded = try JSONDecoder().decode(Edit.self, from: data)
     try expect(decoded.source == .contextSub, "contextSub source must round-trip through Codable")
+}
+
+private func testGuardAcceptsValidSwap() throws {
+    let out = ContextSubstitution.guardOutput("deploy it to Vercel", original: "deploy it to versal", candidates: ["Vercel"])
+    try expect(out == "deploy it to Vercel", "valid single candidate swap must pass")
+}
+private func testGuardAcceptsCompoundFix() throws {
+    let out = ContextSubstitution.guardOutput("write it in TypeScript", original: "write it in type script", candidates: ["TypeScript"])
+    try expect(out == "write it in TypeScript", "type script -> TypeScript (2->1) must pass")
+}
+private func testGuardRejectsOffList() throws {
+    let out = ContextSubstitution.guardOutput("let's use Docker", original: "let's use cuban eats", candidates: ["Kubernetes"])
+    try expect(out == "let's use cuban eats", "swapping in a non-candidate must reject to original")
+}
+private func testGuardRejectsCollapse() throws {
+    let out = ContextSubstitution.guardOutput("Vercel", original: "deploy it to versal", candidates: ["Vercel"])
+    try expect(out == "deploy it to versal", "dropping >1 word (collapse) must reject")
+}
+private func testGuardRejectsPureDeletion() throws {
+    let out = ContextSubstitution.guardOutput("deploy it to", original: "deploy it to versal", candidates: ["Vercel"])
+    try expect(out == "deploy it to versal", "dropping content with nothing added must reject")
+}
+private func testGuardCaseInsensitiveCandidate() throws {
+    let out = ContextSubstitution.guardOutput("ping me on Slack", original: "ping me on slock", candidates: ["slack"])
+    try expect(out == "ping me on Slack", "candidate match is case-insensitive")
 }
