@@ -78,6 +78,11 @@ struct LocalDictationCoreTestRunner {
         await suite.run("guard rejects collapse", testGuardRejectsCollapse)
         await suite.run("guard rejects pure deletion", testGuardRejectsPureDeletion)
         await suite.run("guard candidate is case-insensitive", testGuardCaseInsensitiveCandidate)
+        await suite.run("diff single swap", testDiffSingleSwap)
+        await suite.run("diff compound swap", testDiffCompoundSwap)
+        await suite.run("diff two swaps", testDiffTwoSwaps)
+        await suite.run("diff no change", testDiffNoChange)
+        await suite.run("diff ignores case-only tokens", testDiffIgnoresCaseOnlyTokens)
         suite.finish()
     }
 }
@@ -1676,4 +1681,32 @@ private func testGuardRejectsPureDeletion() throws {
 private func testGuardCaseInsensitiveCandidate() throws {
     let out = ContextSubstitution.guardOutput("ping me on Slack", original: "ping me on slock", candidates: ["slack"])
     try expect(out == "ping me on Slack", "candidate match is case-insensitive")
+}
+
+private func testDiffSingleSwap() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "deploy it to Vercel")
+    try expect(swaps.count == 1, "one swap expected")
+    try expect(swaps[0].from == "versal" && swaps[0].to == "Vercel", "from/to text")
+    let ns = "deploy it to versal" as NSString
+    try expect(ns.substring(with: swaps[0].range) == "versal", "range must address the original word")
+}
+private func testDiffCompoundSwap() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "write it in type script", guarded: "write it in TypeScript")
+    try expect(swaps.count == 1, "compound is one swap")
+    try expect(swaps[0].from == "type script" && swaps[0].to == "TypeScript", "2->1 compound from/to")
+}
+private func testDiffTwoSwaps() throws {
+    let swaps = ContextSubstitution.diffSwaps(
+        original: "deploy it to versal then spin up cuban eats",
+        guarded:  "deploy it to Vercel then spin up Kubernetes")
+    try expect(swaps.count == 2, "two independent swaps must stay separate")
+    try expect(swaps[0].to == "Vercel" && swaps[1].to == "Kubernetes", "ordered targets")
+}
+private func testDiffNoChange() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "the dock was full of boats", guarded: "the dock was full of boats")
+    try expect(swaps.isEmpty, "identical text yields no swaps")
+}
+private func testDiffIgnoresCaseOnlyTokens() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "Deploy it to Vercel")
+    try expect(swaps.count == 1 && swaps[0].to == "Vercel", "case-only differences are not swaps")
 }
