@@ -126,9 +126,14 @@ private func testHelperReaperReapsOrphanOnly() throws {
     try control.run()
     defer { control.terminate() }
 
-    usleep(250_000)  // let both appear in the process table
-
-    let orphans = HelperProcessReaper.orphanPIDs(helpersDir: helpers)
+    // Poll until the orphan appears in proc_listpids (up to 2 s) to avoid a
+    // race where the kernel hasn't yet added the freshly exec'd process.
+    var orphans: [pid_t] = []
+    for _ in 0..<8 {
+        orphans = HelperProcessReaper.orphanPIDs(helpersDir: helpers)
+        if orphans.contains(orphan.processIdentifier) { break }
+        usleep(250_000)
+    }
     try expect(orphans.contains(orphan.processIdentifier), "orphan helper should be detected")
     try expect(!orphans.contains(control.processIdentifier), "control /bin/sleep must not be detected")
 
