@@ -15,6 +15,8 @@ final class AppModel {
     let readiness = ReadinessModel()
 
     private let overlayController = OverlayController()
+    @ObservationIgnored
+    private lazy var substitutionConfirmer = SubstitutionConfirmer(overlay: overlayController)
     private let serverManager = ResidentServerManager(config: .whisper)
     private let llamaManager = ResidentServerManager(config: .llama)
     private var workflow: DictationWorkflow?
@@ -516,12 +518,43 @@ final class AppModel {
             }
             : nil
 
+        // Experimental context substitution: a constrained LLM swap toward
+        // on-screen candidates, held in the countdown overlay for confirmation.
+        // Shares the resident polish model. Reuses the SAME candidates whisper
+        // is biased with (ContextBias), so swaps only target present terms.
+        let ctxSubEnabled = settings.contextSubstitutionEnabled
+        let candidates: [String] = context
+            .map { ContextBias.promptContext(for: $0) }
+            .map { $0.candidates + $0.appVocabulary } ?? []
+        let countdown = settings.contextSubstitutionCountdown
+        let confirmer = substitutionConfirmer
+        let manager = llamaManager
+        let contextSubstitute: (@Sendable (String) async -> (String, [Edit]))? = (ctxSubEnabled && !candidates.isEmpty)
+            ? { @Sendable text in
+                guard let baseURL = await manager.awaitReady(timeout: 30) else { return (text, []) }
+                let engine = ContextSubstituteEngine(baseURL: baseURL, candidates: candidates)
+                let swaps = await engine.proposals(for: text)
+                guard !swaps.isEmpty else { return (text, []) }
+                let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: countdown)
+                switch decision {
+                case .keepOriginal:
+                    return (text, [])
+                case .apply(let accepted):
+                    guard !accepted.isEmpty else { return (text, []) }
+                    let (corrected, edits) = ContextSubstitution.apply(accepted, to: text)
+                    await MainActor.run { self.learnAcceptedTargets(accepted.map(\.to)) }
+                    return (corrected, edits)
+                }
+            }
+            : nil
+
         return DictationWorkflow(
             recorder: recorder,
             transcriber: transcriber,
             inserter: inserter,
             cleanupOptions: settings.cleanUpTranscript ? TranscriptCleaner.Options() : nil,
             preCorrect: preCorrect,
+            contextSubstitute: contextSubstitute,
             polisher: polisher,
             postProcess: textReplacementsTransform(settings: settings)
         )
@@ -600,6 +633,14 @@ final class AppModel {
                 self.ocrTask = nil
             }
         }
+    }
+
+    /// Persist accepted swap targets to custom vocabulary so whisper biases
+    /// toward them next time (the virtuous cycle). De-duped by the helper.
+    private func learnAcceptedTargets(_ targets: [String]) {
+        var vocab = UserDefaults.standard.string(forKey: AppSettingsKeys.customVocabulary) ?? ""
+        for t in targets { vocab = CustomVocabulary.appending(t, to: vocab) }
+        UserDefaults.standard.set(vocab, forKey: AppSettingsKeys.customVocabulary)
     }
 
     /// Persist the transcript to the user-facing history view (when enabled). This
