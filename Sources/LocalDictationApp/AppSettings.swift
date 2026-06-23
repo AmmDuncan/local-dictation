@@ -26,6 +26,9 @@ enum AppSettingsKeys {
     // Crash reporting (handled by CrashReporter, not the dictation snapshot).
     static let crashReportingEnabled = "crashReportingEnabled"
     static let crashReportConsentAsked = "crashReportConsentAsked"
+    static let contextSubstitutionEnabled = "contextSubstitutionEnabled"
+    static let contextSubstitutionCountdown = "contextSubstitutionCountdown"
+    static let rejectedContextSubSwaps = "rejectedContextSubSwaps"
 }
 
 /// How transcribed text reaches the cursor.
@@ -53,6 +56,9 @@ struct AppSettingsSnapshot: Equatable {
     var rejectedBuiltInSwaps: String
     var liveReinsertionEnabled: Bool
     var logCorrections: Bool
+    var contextSubstitutionEnabled: Bool
+    var contextSubstitutionCountdown: Double
+    var rejectedContextSubSwaps: String
 
     var normalizedLanguage: String? {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,7 +91,10 @@ struct AppSettingsSnapshot: Equatable {
             saveHistory: defaults.object(forKey: AppSettingsKeys.saveHistory) as? Bool ?? Defaults.saveHistory,
             rejectedBuiltInSwaps: defaults.string(forKey: AppSettingsKeys.rejectedBuiltInSwaps) ?? Defaults.rejectedBuiltInSwaps,
             liveReinsertionEnabled: defaults.object(forKey: AppSettingsKeys.liveReinsertionEnabled) as? Bool ?? Defaults.liveReinsertionEnabled,
-            logCorrections: defaults.object(forKey: AppSettingsKeys.logCorrections) as? Bool ?? Defaults.logCorrections
+            logCorrections: defaults.object(forKey: AppSettingsKeys.logCorrections) as? Bool ?? Defaults.logCorrections,
+            contextSubstitutionEnabled: defaults.object(forKey: AppSettingsKeys.contextSubstitutionEnabled) as? Bool ?? Defaults.contextSubstitutionEnabled,
+            contextSubstitutionCountdown: defaults.object(forKey: AppSettingsKeys.contextSubstitutionCountdown) as? Double ?? Defaults.contextSubstitutionCountdown,
+            rejectedContextSubSwaps: defaults.string(forKey: AppSettingsKeys.rejectedContextSubSwaps) ?? Defaults.rejectedContextSubSwaps
         )
     }
 
@@ -111,7 +120,10 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.saveHistory: Defaults.saveHistory,
             AppSettingsKeys.rejectedBuiltInSwaps: Defaults.rejectedBuiltInSwaps,
             AppSettingsKeys.liveReinsertionEnabled: Defaults.liveReinsertionEnabled,
-            AppSettingsKeys.logCorrections: Defaults.logCorrections
+            AppSettingsKeys.logCorrections: Defaults.logCorrections,
+            AppSettingsKeys.contextSubstitutionEnabled: Defaults.contextSubstitutionEnabled,
+            AppSettingsKeys.contextSubstitutionCountdown: Defaults.contextSubstitutionCountdown,
+            AppSettingsKeys.rejectedContextSubSwaps: Defaults.rejectedContextSubSwaps
         ])
         migrateLegacyLanguageDefault()
     }
@@ -166,5 +178,8 @@ struct AppSettingsSnapshot: Equatable {
         static let rejectedBuiltInSwaps = ""  // JSON [String] of rejected built-in swap identities (suppression set)
         static let liveReinsertionEnabled = false  // experimental: AX select-verify-replace of the current instance
         static let logCorrections = true  // log dictations + their edits for the Learn-tab review queue
+        static let contextSubstitutionEnabled = false  // experimental: constrained LLM swap with countdown confirm
+        static let contextSubstitutionCountdown: Double = 5.0
+        static let rejectedContextSubSwaps = ""
     }
 }
