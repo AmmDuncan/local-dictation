@@ -126,6 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if let path = ProcessInfo.processInfo.environment["LD_REVIEW_SUB_SHOT"] {
+            renderReviewSubstitutionShot(to: path)
+            return
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["LD_METER_TEST"] != nil {
             runMeterTest()
@@ -141,6 +146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let path = ProcessInfo.processInfo.environment["LD_OVERLAY_SHOT"] {
             captureOverlay(to: path)
+            return
+        }
+        if ProcessInfo.processInfo.environment["LD_REVIEW_SUB_LIVE"] != nil {
+            runReviewSubstitutionLive()
             return
         }
         #endif
@@ -218,6 +227,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? png.write(to: URL(fileURLWithPath: path))
         }
     }
+
+    /// Diagnostic (env LD_REVIEW_SUB_SHOT=<path>): renders the `.reviewSubstitution`
+    /// overlay to PNGs off-screen — the default all-accepted state and a
+    /// swap-2-toggled-off / manual (countdown cancelled) variant — so the inline
+    /// transcript, chips, and Keep/Apply buttons can be reviewed without a live
+    /// window or screen capture. Exits when done.
+    @MainActor
+    private func renderReviewSubstitutionShot(to path: String) {
+        let text = "deploy it to versal then spin up cuban eats"
+        let ns = text as NSString
+        let state = OverlayState()
+        state.phase = .reviewSubstitution
+        state.title = "Review swaps before typing"
+        state.reviewText = text
+        state.pendingSwaps = [
+            OverlayState.PendingSwap(id: 1, range: ns.range(of: "versal"), from: "versal", to: "Vercel"),
+            OverlayState.PendingSwap(id: 2, range: ns.range(of: "cuban eats"), from: "cuban eats", to: "Kubernetes"),
+        ]
+        state.countdownTotal = 5
+        state.countdownRemaining = 4
+        state.countdownActive = true
+        writeOverlayPNG(state, to: path)
+
+        // Variant: user toggled swap 2 off → manual mode (countdown cancelled).
+        state.pendingSwaps[1].accepted = false
+        state.countdownActive = false
+        writeOverlayPNG(state, to: path.replacingOccurrences(of: ".png", with: "-toggled.png"))
+        exit(0)
+    }
+
+    @MainActor
+    private func writeOverlayPNG(_ state: OverlayState, to path: String) {
+        let view = OverlayView(state: state)
+            .frame(width: 464, height: 380)
+            .background(Color(red: 0.05, green: 0.10, blue: 0.12))
+            .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        if let image = renderer.nsImage,
+           let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    #if DEBUG
+    /// Diagnostic (env LD_REVIEW_SUB_LIVE): shows the real `.reviewSubstitution`
+    /// overlay with two canned swaps and the real confirmer, so the mouse-driven
+    /// toggle / Apply / Keep interaction can be smoke-tested without a microphone.
+    /// Writes the resolved decision to /tmp/ld-review-sub-decision.txt and exits.
+    @MainActor
+    private func runReviewSubstitutionLive() {
+        let overlay = OverlayController()
+        let confirmer = SubstitutionConfirmer(overlay: overlay)
+        let text = "deploy it to versal then spin up cuban eats"
+        let ns = text as NSString
+        let swaps = [
+            ProposedSwap(range: ns.range(of: "versal"), from: "versal", to: "Vercel"),
+            ProposedSwap(range: ns.range(of: "cuban eats"), from: "cuban eats", to: "Kubernetes"),
+        ]
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        Task { @MainActor in
+            let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: 60)
+            let desc: String
+            switch decision {
+            case .keepOriginal: desc = "keepOriginal"
+            case .apply(let s): desc = "apply(" + s.map { "\($0.from)->\($0.to)" }.joined(separator: ", ") + ")"
+            }
+            print("LD_REVIEW_SUB_LIVE decision: \(desc)")
+            try? (desc + "\n").write(toFile: "/tmp/ld-review-sub-decision.txt", atomically: true, encoding: .utf8)
+            exit(0)
+        }
+    }
+    #endif
 
     /// Diagnostic (env LD_CONTEXT_PROBE=<file>): lets the context pipeline be
     /// verified at runtime WITHOUT a microphone. Logs accessibility/OCR-permission
