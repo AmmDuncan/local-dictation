@@ -34,7 +34,7 @@ struct ReviewPanel: View {
     @State private var anchor: Int?
     @State private var head: Int?
     @State private var editValue = ""
-    @State private var alsoBias = false
+    @State private var alsoBias = true  // opt-out; defaults on (rationale at appendTeach)
     /// Transient "✓ Learned X → Y" confirmation after an apply, so saving a fix —
     /// especially from a past (history) dictation, where it only teaches forward and
     /// rewrites nothing on screen — isn't silent.
@@ -331,7 +331,7 @@ struct ReviewPanel: View {
     }
 
     private func resetEditor() {
-        alsoBias = false
+        alsoBias = true
         guard let range = selectedRange else { editValue = ""; return }
         if let edit = singleSwap(in: range) {
             editValue = edit.to  // pre-fill a change with the current value to tweak
@@ -448,16 +448,15 @@ struct ReviewPanel: View {
             let rules = TextReplacements.parse(textReplacements) + [rule]
             textReplacements = TextReplacements.serialize(rules)
         }
+        // Default on: feed the corrected term into the recognition bias prompt so the
+        // decoder stops mishearing it next time, not just rewriting it after the fact.
         if alsoBias {
-            let term = trimmed(correction)
-            if !term.isEmpty {
-                customVocabulary = customVocabulary.isEmpty ? term : customVocabulary + "\n" + term
-            }
+            customVocabulary = CustomVocabulary.appending(correction, to: customVocabulary)
         }
     }
 
     private func clearSelection() {
-        anchor = nil; head = nil; editValue = ""; alsoBias = false
+        anchor = nil; head = nil; editValue = ""; alsoBias = true
     }
 
     private func trimmed(_ s: String) -> String { s.trimmingCharacters(in: .whitespaces) }

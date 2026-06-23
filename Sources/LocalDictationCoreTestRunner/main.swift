@@ -67,6 +67,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
         await suite.run("Recognition prompt merges default vocabulary", testDefaultVocabularyMerge)
+        await suite.run("Custom vocabulary append dedups (case/space-insensitive)", testCustomVocabularyAppendDedup)
         await suite.run("TranscriptionError userMessage is jargon-free", testTranscriptionErrorUserMessage)
         await suite.run("HelperReaper matches bundle Helpers path only", testHelperReaperPathMatching)
         await suite.run("HelperReaper reaps orphan under Helpers dir, spares others", testHelperReaperReapsOrphanOnly)
@@ -554,6 +555,16 @@ private func testWhisperArgsVADTuning() throws {
     )
 }
 
+private func testCustomVocabularyAppendDedup() throws {
+    try expect(CustomVocabulary.appending("Vercel", to: "") == "Vercel", "append to empty list")
+    try expect(CustomVocabulary.appending("Supabase", to: "Vercel") == "Vercel\nSupabase", "new term appended newline-joined")
+    try expect(CustomVocabulary.appending("Vercel", to: "Vercel") == "Vercel", "exact duplicate skipped")
+    try expect(CustomVocabulary.appending("  vercel ", to: "Vercel\nSupabase") == "Vercel\nSupabase", "case/space-insensitive duplicate skipped")
+    try expect(CustomVocabulary.appending("Vercel", to: "Vercel\r\nSupabase") == "Vercel\r\nSupabase", "CRLF list: existing term still deduped")
+    try expect(CustomVocabulary.appending("   ", to: "Vercel") == "Vercel", "empty/whitespace term is a no-op")
+    try expect(CustomVocabulary.appending("  Kubernetes ", to: "") == "Kubernetes", "term trimmed on insert")
+}
+
 private func testAudioPeakNormalization() throws {
     func peak(_ s: [Float]) -> Float { s.map(abs).max() ?? 0 }
     let approx: (Float, Float) -> Bool = { abs($0 - $1) < 1e-4 }
@@ -972,6 +983,32 @@ private func testCommandModeCorrections() throws {
         "command formatting: lowercase Git + strip trailing period"
     )
 
+    // git-homophone recovery: whisper mis-hears the command head "git" as "get"/"guit"
+    // (observed in the A/B harness: "git checkout main" -> "get checkout main"). When
+    // it heads an UNAMBIGUOUS git subcommand we recover it to "git".
+    try expect(
+        CommandModeCorrections.apply(to: "get checkout main", appClass: .terminal, precedingText: nil) == "git checkout main",
+        "misheard 'get checkout' -> 'git checkout'"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "guit rebase mane", appClass: .editor, precedingText: nil) == "git rebase main",
+        "misheard 'guit rebase' + 'mane' -> 'git rebase main' (length-changing head fix)"
+    )
+    try expect(
+        CommandModeCorrections.isCommandContext(appClass: .terminal, line: "get checkout main"),
+        "'get checkout' is command context (misheard git)"
+    )
+    // But a misheard-git homophone before a PROSE-ambiguous word is left alone — we
+    // never rewrite "get push notifications" into a git command.
+    try expect(
+        !CommandModeCorrections.isCommandContext(appClass: .terminal, line: "get push notifications working"),
+        "'get push' prose is not command context"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "get push notifications working", appClass: .terminal, precedingText: nil) == "get push notifications working",
+        "'get push ...' prose is untouched"
+    )
+
     // LEFT ALONE in prose context — the whole point of context-scoping.
     try expect(
         CommandModeCorrections.apply(to: "push to me", appClass: .chat, precedingText: "tell them to ") == "push to me",
@@ -1238,6 +1275,14 @@ private func testCommandModeEditTracking() throws {
     // Gated: terminal app but no git command in the line → untouched, no edits.
     let (o3, e3) = CommandModeCorrections.applyTracked(to: "remind me", appClass: terminal, precedingText: "please")
     try expect(o3 == "remind me" && e3.isEmpty, "no git command -> untouched, no edits")
+
+    // git-homophone head fix is tracked; the length-changing "guit"->"git" (-1) must
+    // rebase the later "mane"->"main" edit so its range still maps to the output.
+    let (o4, e4) = CommandModeCorrections.applyTracked(to: "guit checkout mane", appClass: terminal, precedingText: nil)
+    try expect(o4 == "git checkout main", "guit->git + mane->main: \(o4)")
+    try expect(e4.contains { $0.from.lowercased() == "guit" && $0.to == "git" && $0.source == .command }, "guit->git edit present")
+    let mainEdit = e4.first { $0.to == "main" }
+    try expect(mainEdit != nil && (o4 as NSString).substring(with: mainEdit!.range) == "main", "main edit range maps to output after head shift")
 }
 
 private func testEditFoldCombine() throws {
