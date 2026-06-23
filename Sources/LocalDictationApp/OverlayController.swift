@@ -156,6 +156,16 @@ final class OverlayController {
         state.pendingSwaps.filter(\.accepted)
     }
 
+    #if DEBUG
+    // Headless smoke hooks: invoke the EXACT closures the overlay's tap gestures
+    // and buttons call, so the confirmer state machine can be driven without a
+    // mouse (computer-use can't target this app). See runReviewSubstitutionLive.
+    var debugCountdownActive: Bool { state.countdownActive }
+    func simulateReviewToggle(id: Int) { state.reviewToggle?(id) }
+    func simulateReviewApply() { state.reviewApply?() }
+    func simulateReviewKeep() { state.reviewKeep?() }
+    #endif
+
     /// Update the rolling partial transcript without changing phase.
     func updateListeningDetail(_ detail: String) {
         guard state.phase == .listening else { return }

@@ -290,6 +290,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // Headless smoke (LD_REVIEW_SUB_SIM): drive the toggle/apply/keep closures a
+        // click would fire, so the confirmer path is exercised without a mouse.
+        if let sim = ProcessInfo.processInfo.environment["LD_REVIEW_SUB_SIM"] {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(800))  // let confirm() wire the actions
+                switch sim {
+                case "keep":
+                    overlay.simulateReviewKeep()
+                case "toggle2-apply":
+                    overlay.simulateReviewToggle(id: 2)          // "click" swap 2 off
+                    let active = overlay.debugCountdownActive     // expect false (countdown cancelled)
+                    try? ("toggledOff=2 countdownActiveAfterToggle=\(active)\n")
+                        .write(toFile: "/tmp/ld-review-sub-sim.txt", atomically: true, encoding: .utf8)
+                    try? await Task.sleep(for: .milliseconds(150))
+                    overlay.simulateReviewApply()                // "click" Apply
+                default:
+                    overlay.simulateReviewApply()                // apply all
+                }
+            }
+        }
         Task { @MainActor in
             let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: 60)
             let desc: String
