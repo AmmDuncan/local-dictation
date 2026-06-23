@@ -166,3 +166,45 @@ extension ContextSubstitution {
         return (ns as String, edits)
     }
 }
+
+public enum SubstitutionDecision: Equatable, Sendable {
+    case keepOriginal
+    case apply([ProposedSwap])   // the subset still toggled on (may be all)
+}
+
+/// Presents the proposed swaps and resolves the user's decision (timeout =
+/// apply current toggle state, Accept = apply now, esc = keepOriginal).
+public protocol SubstitutionConfirming: Sendable {
+    func confirm(text: String, swaps: [ProposedSwap], countdown: TimeInterval) async -> SubstitutionDecision
+}
+
+/// Runs the constrained pass against the resident llama-server and returns the
+/// guarded, diffed swaps. Empty on any failure or when nothing survives the guard.
+public struct ContextSubstituteEngine: Sendable {
+    let baseURL: URL
+    let candidates: [String]
+    let timeoutSeconds: TimeInterval
+
+    public init(baseURL: URL, candidates: [String], timeoutSeconds: TimeInterval = 20) {
+        self.baseURL = baseURL
+        self.candidates = candidates
+        self.timeoutSeconds = timeoutSeconds
+    }
+
+    public func proposals(for text: String) async -> [ProposedSwap] {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty, !candidates.isEmpty else { return [] }
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = ContextSubstitution.chatRequestBody(transcript: text, candidates: candidates)
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: request),
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+            let raw = ContextSubstitution.parseContent(data)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+        else { return [] }
+        let guarded = ContextSubstitution.guardOutput(raw, original: text, candidates: candidates)
+        guard guarded != text else { return [] }
+        return ContextSubstitution.diffSwaps(original: text, guarded: guarded)
+    }
+}
