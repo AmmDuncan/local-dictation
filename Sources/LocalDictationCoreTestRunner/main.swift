@@ -88,6 +88,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("apply empty", testApplyEmpty)
         await suite.run("substitution request body shape", testRequestBodyShape)
         await suite.run("substitution parseContent", testParseContent)
+        await suite.run("contextSubstitute folds into segmentA", testContextSubstituteFoldsIntoSegmentA)
         suite.finish()
     }
 }
@@ -1759,4 +1760,17 @@ private func testRequestBodyShape() throws {
 private func testParseContent() throws {
     let payload = #"{"choices":[{"message":{"content":"deploy it to Vercel"}}]}"#.data(using: .utf8)!
     try expect(ContextSubstitution.parseContent(payload) == "deploy it to Vercel", "parses choices[0].message.content")
+}
+
+private func testContextSubstituteFoldsIntoSegmentA() async throws {
+    // A stub stage that swaps "versal" -> "Vercel" and reports the edit.
+    let stage: @Sendable (String) async -> (String, [Edit]) = { text in
+        ContextSubstitution.apply(
+            ContextSubstitution.diffSwaps(original: text, guarded: text.replacingOccurrences(of: "versal", with: "Vercel")),
+            to: text)
+    }
+    let (out, edits) = await stage("deploy it to versal")
+    try expect(out == "deploy it to Vercel", "stage applies the swap")
+    let folded = EditFold.combine([[], edits])
+    try expect(folded.count == 1 && folded[0].source == .contextSub, "edits fold into segmentA space")
 }

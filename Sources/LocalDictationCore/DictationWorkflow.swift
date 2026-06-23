@@ -89,6 +89,7 @@ public final class DictationWorkflow: @unchecked Sendable {
     /// correct term instead of swapping in an unrelated vocabulary word. Returns the
     /// corrected text plus its attributed edits (Segment A).
     private let preCorrect: (@Sendable (String) -> (String, [Edit]))?
+    private let contextSubstitute: (@Sendable (String) async -> (String, [Edit]))?
     private let polisher: TextPolishing?
     /// Deterministic transform applied AFTER polish, just before insertion — e.g.
     /// user text replacements / snippet expansion. Runs after polish so an
@@ -102,6 +103,7 @@ public final class DictationWorkflow: @unchecked Sendable {
         inserter: TextInserting,
         cleanupOptions: TranscriptCleaner.Options? = nil,
         preCorrect: (@Sendable (String) -> (String, [Edit]))? = nil,
+        contextSubstitute: (@Sendable (String) async -> (String, [Edit]))? = nil,
         polisher: TextPolishing? = nil,
         postProcess: (@Sendable (String) -> (String, [Edit]))? = nil
     ) {
@@ -110,6 +112,7 @@ public final class DictationWorkflow: @unchecked Sendable {
         self.inserter = inserter
         self.cleanupOptions = cleanupOptions
         self.preCorrect = preCorrect
+        self.contextSubstitute = contextSubstitute
         self.polisher = polisher
         self.postProcess = postProcess
     }
@@ -186,6 +189,14 @@ public final class DictationWorkflow: @unchecked Sendable {
                 let (corrected, edits) = preCorrect(insertText)
                 insertText = corrected
                 segmentA = edits
+            }
+            // Context substitution (async; may suspend for the confirm overlay).
+            // Folds its edits into Segment A so they share the pre-polish space
+            // and surface as CONTEXT chips in the review panel.
+            if let contextSubstitute {
+                let (corrected, edits) = await contextSubstitute(insertText)
+                insertText = corrected
+                segmentA = EditFold.combine([segmentA, edits])
             }
             // The deterministic pre-polish result — the space Segment A edits point
             // into, and what the review panel highlights against.
