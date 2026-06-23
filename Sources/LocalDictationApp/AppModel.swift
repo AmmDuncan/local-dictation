@@ -221,10 +221,11 @@ final class AppModel {
         serverManager.ensureRunning(modelPath: model, executablePath: server)
     }
 
-    /// Start (or stop) the resident llama-server for the optional LLM polish pass.
-    /// Only runs when polish is enabled and both the model + executable exist.
+    /// Start (or stop) the resident llama-server for the optional LLM passes
+    /// (formatting polish and/or experimental context substitution). Both share
+    /// one resident model (settings.polishModelPath).
     private func warmUpPolishServer(settings: AppSettingsSnapshot) {
-        guard settings.polishWithAI else {
+        guard settings.polishWithAI || settings.contextSubstitutionEnabled else {
             llamaManager.stop()
             return
         }
