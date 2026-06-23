@@ -117,4 +117,22 @@ extension ContextSubstitution {
         let to = (j..<(j + b)).map { gt[$0].text }.joined(separator: " ")
         return ProposedSwap(range: range, from: from, to: to)
     }
+
+    /// Apply a subset of proposed swaps to `text`, returning the corrected string
+    /// and one `Edit` per swap in OUTPUT coordinate space (suitable for `EditFold.combine`).
+    public static func apply(_ swaps: [ProposedSwap], to text: String) -> (String, [Edit]) {
+        guard !swaps.isEmpty else { return (text, []) }
+        let sorted = swaps.sorted { $0.range.location < $1.range.location }
+        let ns = NSMutableString(string: text)
+        var edits: [Edit] = []
+        var delta = 0
+        for swap in sorted {
+            let newLocation = swap.range.location + delta
+            let toLen = (swap.to as NSString).length
+            ns.replaceCharacters(in: NSRange(location: newLocation, length: swap.range.length), with: swap.to)
+            edits.append(Edit(location: newLocation, length: toLen, from: swap.from, to: swap.to, source: .contextSub))
+            delta += toLen - swap.range.length
+        }
+        return (ns as String, edits)
+    }
 }

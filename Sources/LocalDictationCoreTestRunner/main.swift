@@ -83,6 +83,9 @@ struct LocalDictationCoreTestRunner {
         await suite.run("diff two swaps", testDiffTwoSwaps)
         await suite.run("diff no change", testDiffNoChange)
         await suite.run("diff ignores case-only tokens", testDiffIgnoresCaseOnlyTokens)
+        await suite.run("apply single swap", testApplySingle)
+        await suite.run("apply two swaps offsets", testApplyTwoSwapsOffsets)
+        await suite.run("apply empty", testApplyEmpty)
         suite.finish()
     }
 }
@@ -1709,4 +1712,27 @@ private func testDiffNoChange() throws {
 private func testDiffIgnoresCaseOnlyTokens() throws {
     let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "Deploy it to Vercel")
     try expect(swaps.count == 1 && swaps[0].to == "Vercel", "case-only differences are not swaps")
+}
+
+private func testApplySingle() throws {
+    let original = "deploy it to versal"
+    let swaps = ContextSubstitution.diffSwaps(original: original, guarded: "deploy it to Vercel")
+    let (out, edits) = ContextSubstitution.apply(swaps, to: original)
+    try expect(out == "deploy it to Vercel", "applied text")
+    try expect(edits.count == 1 && edits[0].source == .contextSub, "one contextSub edit")
+    let ns = out as NSString
+    try expect(ns.substring(with: edits[0].range) == "Vercel", "edit range addresses 'to' in OUTPUT space")
+}
+private func testApplyTwoSwapsOffsets() throws {
+    let original = "deploy it to versal then spin up cuban eats"
+    let swaps = ContextSubstitution.diffSwaps(original: original, guarded: "deploy it to Vercel then spin up Kubernetes")
+    let (out, edits) = ContextSubstitution.apply(swaps, to: original)
+    try expect(out == "deploy it to Vercel then spin up Kubernetes", "both applied")
+    let ns = out as NSString
+    try expect(ns.substring(with: edits[0].range) == "Vercel", "first edit range valid post-shift")
+    try expect(ns.substring(with: edits[1].range) == "Kubernetes", "second edit range valid post-shift")
+}
+private func testApplyEmpty() throws {
+    let (out, edits) = ContextSubstitution.apply([], to: "unchanged")
+    try expect(out == "unchanged" && edits.isEmpty, "no swaps -> no change")
 }
