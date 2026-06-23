@@ -119,7 +119,7 @@ final class OverlayController {
         state.countdownTotal = countdown
         state.countdownRemaining = countdown
         state.countdownActive = true
-        present(phase: .reviewSubstitution, title: "Review swaps before typing", detail: "")
+        present(phase: .reviewSubstitution, title: "Review swaps", detail: "")
     }
 
     /// Mutate the live overlay state for the .reviewSubstitution phase. The

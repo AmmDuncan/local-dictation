@@ -239,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ns = text as NSString
         let state = OverlayState()
         state.phase = .reviewSubstitution
-        state.title = "Review swaps before typing"
+        state.title = "Review swaps"
         state.reviewText = text
         state.pendingSwaps = [
             OverlayState.PendingSwap(id: 1, range: ns.range(of: "versal"), from: "versal", to: "Vercel"),
