@@ -71,6 +71,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("TranscriptionError userMessage is jargon-free", testTranscriptionErrorUserMessage)
         await suite.run("HelperReaper matches bundle Helpers path only", testHelperReaperPathMatching)
         await suite.run("HelperReaper reaps orphan under Helpers dir, spares others", testHelperReaperReapsOrphanOnly)
+        await suite.run("Edit.Source.contextSub round-trips", testEditSourceContextSubRoundTrips)
         suite.finish()
     }
 }
@@ -1637,4 +1638,11 @@ private final class FakePolisher: TextPolishing, @unchecked Sendable {
         receivedInput = text
         return transform(text)
     }
+}
+
+private func testEditSourceContextSubRoundTrips() throws {
+    let edit = Edit(location: 3, length: 6, from: "versal", to: "Vercel", source: .contextSub)
+    let data = try JSONEncoder().encode(edit)
+    let decoded = try JSONDecoder().decode(Edit.self, from: data)
+    try expect(decoded.source == .contextSub, "contextSub source must round-trip through Codable")
 }
