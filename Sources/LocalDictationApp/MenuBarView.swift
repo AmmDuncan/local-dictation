@@ -57,6 +57,12 @@ struct MenuBarView: View {
                     NSApplication.shared.terminate(nil)
                 }
             }
+
+            Text(versionLabel)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 2)
         }
         .padding(16)
         .frame(width: 320, alignment: .leading)
@@ -64,6 +70,15 @@ struct MenuBarView: View {
             model.readiness.refresh()
             hasCrashReport = CrashReporter.hasAnyReport()
         }
+    }
+
+    /// App version + build, shown small at the foot of the popover so it's always
+    /// clear which build is installed (e.g. when diagnosing whether an update took).
+    private var versionLabel: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "Version \(short) (\(build))"
     }
 
     /// A tappable preview of the most recent dictation. Clicking opens Dictation
