@@ -3,6 +3,18 @@ import Foundation
 import LocalDictationCore
 import Observation
 
+/// Shared on-disk record of helper PIDs this app spawns, so a crash/force-quit
+/// orphan can be reaped on next launch even when it lives outside the bundle (a
+/// dev build's Homebrew fallback). Keyed on the fixed bundle id (not the bundle
+/// API), so dev and installed builds share it and reap each other's leftovers.
+enum SpawnedHelpers {
+    static let pidFile: String = {
+        let dir = NSHomeDirectory() + "/Library/Application Support/dev.ammiel.local-dictation"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir + "/spawned-helpers.pids"
+    }()
+}
+
 /// Owns a long-lived llama.cpp-family subprocess (whisper-server or llama-server)
 /// so the model stays resident — no per-call reload. Starts lazily, restarts when
 /// the model changes, and reports readiness so callers can wait out a cold load
@@ -133,6 +145,7 @@ final class ResidentServerManager {
         }
         process = proc
         port = chosenPort
+        HelperProcessReaper.recordSpawnedPID(proc.processIdentifier, toFile: SpawnedHelpers.pidFile)
 
         readinessTask = Task { [weak self] in
             await self?.pollUntilReady(port: chosenPort)

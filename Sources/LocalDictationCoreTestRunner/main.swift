@@ -70,6 +70,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("TranscriptionError userMessage is jargon-free", testTranscriptionErrorUserMessage)
         await suite.run("HelperReaper matches bundle Helpers path only", testHelperReaperPathMatching)
         await suite.run("HelperReaper reaps orphan under Helpers dir, spares others", testHelperReaperReapsOrphanOnly)
+        await suite.run("reapTracked kills only recorded live helpers (PID-reuse safe)", testReapTrackedKillsOnlyRecordedLiveHelpers)
         suite.finish()
     }
 }
@@ -124,6 +125,44 @@ private func testHelperReaperReapsOrphanOnly() throws {
     usleep(500_000)
     try expect(!orphan.isRunning, "orphan should be killed")
     try expect(control.isRunning, "control must still be running")
+}
+
+private func testReapTrackedKillsOnlyRecordedLiveHelpers() throws {
+    let fm = FileManager.default
+    let base = NSTemporaryDirectory() + "ld-reaptracked-\(getpid())"
+    try fm.createDirectory(atPath: base, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: base) }
+
+    // A fake helper whose basename is a known helper name, plus a control with a
+    // NON-helper basename — both recorded, simulating a later recycled PID.
+    let fakeHelper = base + "/whisper-server"
+    try fm.copyItem(atPath: "/bin/sleep", toPath: fakeHelper)
+
+    let helper = Process()
+    helper.executableURL = URL(fileURLWithPath: fakeHelper)
+    helper.arguments = ["30"]
+    try helper.run()
+    let control = Process()
+    control.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    control.arguments = ["30"]
+    try control.run()
+    defer { helper.terminate(); control.terminate() }
+    usleep(250_000)
+
+    let pidFile = base + "/spawned.pids"
+    HelperProcessReaper.recordSpawnedPID(helper.processIdentifier, toFile: pidFile)
+    HelperProcessReaper.recordSpawnedPID(control.processIdentifier, toFile: pidFile)
+
+    let killed = HelperProcessReaper.reapTracked(file: pidFile)
+    usleep(500_000)
+    try expect(killed.contains(helper.processIdentifier), "a recorded live helper must be reaped")
+    try expect(!helper.isRunning, "the recorded helper should be killed")
+    // The control is a recorded PID whose executable is NOT a helper (the PID-reuse
+    // guard) — it must be spared even though it was recorded.
+    try expect(!killed.contains(control.processIdentifier), "a recorded non-helper PID must not be reaped")
+    try expect(control.isRunning, "control must still be running")
+    let leftover = (try? String(contentsOfFile: pidFile, encoding: .utf8)) ?? ""
+    try expect(leftover.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "pid file cleared after reaping")
 }
 
 private struct TestSuite {

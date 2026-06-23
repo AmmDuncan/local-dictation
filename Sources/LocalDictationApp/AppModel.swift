@@ -139,6 +139,9 @@ final class AppModel {
     private static func reapOrphanedHelpers() {
         let helpersDir = Bundle.main.bundlePath + "/Contents/Helpers"
         HelperProcessReaper.reap(helpersDir: helpersDir)
+        // Also reap helpers WE spawned that live outside the bundle (a dev build's
+        // Homebrew fallback) — by recorded PID, so unrelated servers are never hit.
+        HelperProcessReaper.reapTracked(file: SpawnedHelpers.pidFile)
     }
 
     /// One-time migration from the old single-shortcut "Activation" setting to two

@@ -46,6 +46,52 @@ public enum HelperProcessReaper {
         return orphans
     }
 
+    /// Append a helper PID we just spawned to `path`, so a later launch can reap it
+    /// even when it lives OUTSIDE the bundle (a dev build's Homebrew fallback) — the
+    /// case `reap(helpersDir:)` deliberately can't touch. Best-effort; never throws.
+    public static func recordSpawnedPID(_ pid: pid_t, toFile path: String) {
+        guard pid > 0 else { return }
+        let line = "\(pid)\n"
+        if let handle = FileHandle(forWritingAtPath: path) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+        } else {
+            try? line.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// Reap helpers previously recorded in `path` via `recordSpawnedPID`: for each
+    /// recorded PID still alive whose executable is STILL a known helper — the
+    /// basename check guards against the PID being recycled by an unrelated process
+    /// — SIGTERM then SIGKILL. Only PIDs we recorded are ever touched, so a Homebrew
+    /// whisper-server the user started themselves is never killed. Clears the file
+    /// afterwards. Returns the PIDs signalled.
+    @discardableResult
+    public static func reapTracked(file path: String, keeping: Set<pid_t> = []) -> [pid_t] {
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
+        let recorded = Set(contents.split(whereSeparator: \.isNewline).compactMap {
+            pid_t($0.trimmingCharacters(in: .whitespaces))
+        })
+        var signalled: [pid_t] = []
+        for pid in recorded where pid > 0 && !keeping.contains(pid) {
+            guard kill(pid, 0) == 0, isHelperProcess(pid: pid) else { continue }
+            kill(pid, SIGTERM)
+            signalled.append(pid)
+        }
+        usleep(300_000)
+        for pid in signalled where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        try? "".write(toFile: path, atomically: true, encoding: .utf8)
+        return signalled
+    }
+
+    /// True when `pid`'s launch executable basename is a known helper — guards
+    /// against killing a PID that has been recycled by some other process.
+    private static func isHelperProcess(pid: pid_t) -> Bool {
+        guard let path = executablePath(of: pid) else { return false }
+        return helperNames.contains((path as NSString).lastPathComponent)
+    }
+
     /// The executable path a process was launched from, read from its saved argv
     /// via KERN_PROCARGS2. We deliberately avoid `proc_pidpath`: it resolves the
     /// live executable vnode and returns ENOENT once that file is unlinked — which
