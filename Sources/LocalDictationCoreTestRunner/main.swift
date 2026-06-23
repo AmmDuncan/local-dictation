@@ -86,6 +86,8 @@ struct LocalDictationCoreTestRunner {
         await suite.run("apply single swap", testApplySingle)
         await suite.run("apply two swaps offsets", testApplyTwoSwapsOffsets)
         await suite.run("apply empty", testApplyEmpty)
+        await suite.run("substitution request body shape", testRequestBodyShape)
+        await suite.run("substitution parseContent", testParseContent)
         suite.finish()
     }
 }
@@ -1740,4 +1742,21 @@ private func testApplyTwoSwapsOffsets() throws {
 private func testApplyEmpty() throws {
     let (out, edits) = ContextSubstitution.apply([], to: "unchanged")
     try expect(out == "unchanged" && edits.isEmpty, "no swaps -> no change")
+}
+
+private func testRequestBodyShape() throws {
+    let data = ContextSubstitution.chatRequestBody(transcript: "deploy it to versal", candidates: ["Vercel", "Netlify"])
+    let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    try expect((json["temperature"] as? Double) == 0, "temperature must be 0")
+    let kwargs = json["chat_template_kwargs"] as? [String: Any]
+    try expect((kwargs?["enable_thinking"] as? Bool) == false, "thinking disabled")
+    let messages = json["messages"] as! [[String: String]]
+    try expect(messages.first?["role"] == "system", "first message is system")
+    try expect(messages.first!["content"]!.contains("Vercel, Netlify"), "system prompt lists candidates")
+    try expect(messages.last?["role"] == "user", "last message is user")
+    try expect(messages.last!["content"]!.contains("deploy it to versal"), "user carries the transcript")
+}
+private func testParseContent() throws {
+    let payload = #"{"choices":[{"message":{"content":"deploy it to Vercel"}}]}"#.data(using: .utf8)!
+    try expect(ContextSubstitution.parseContent(payload) == "deploy it to Vercel", "parses choices[0].message.content")
 }

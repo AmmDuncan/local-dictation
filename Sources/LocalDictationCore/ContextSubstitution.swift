@@ -118,6 +118,36 @@ extension ContextSubstitution {
         return ProposedSwap(range: range, from: from, to: to)
     }
 
+    /// The A/B-validated CONSTRAINED system prompt (substitution_ab.py:100), {cands} filled.
+    public static func systemPrompt(candidates: [String]) -> String {
+        let cands = candidates.joined(separator: ", ")
+        return "You are a dictation corrector. The user message is raw speech-to-text that may contain MISHEARINGS. "
+            + "You may replace a misheard word ONLY with a term from this exact CANDIDATE list: \(cands). "
+            + "Only do so when a word is clearly a mishearing of a candidate. If nothing clearly matches, change NOTHING. "
+            + "Never invent words, never substitute anything not in the candidate list, never touch a word that is already "
+            + "ordinary correct English, never add/remove/reorder other words. Output ONLY the corrected text, nothing else."
+    }
+
+    public static func chatRequestBody(transcript: String, candidates: [String]) -> Data {
+        let cands = candidates.joined(separator: ", ")
+        let user = "CONTEXT (on-screen / vocabulary terms): \(cands)\n\nTRANSCRIPT: \(transcript)"
+        let payload: [String: Any] = [
+            "messages": [
+                ["role": "system", "content": systemPrompt(candidates: candidates)],
+                ["role": "user", "content": user],
+            ],
+            "temperature": 0,
+            "stream": false,
+            "chat_template_kwargs": ["enable_thinking": false],
+        ]
+        return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+    }
+
+    public static func parseContent(_ data: Data) -> String? {
+        struct Response: Decodable { struct Choice: Decodable { struct Message: Decodable { let content: String }; let message: Message }; let choices: [Choice] }
+        return (try? JSONDecoder().decode(Response.self, from: data))?.choices.first?.message.content
+    }
+
     /// Apply a subset of proposed swaps to `text`, returning the corrected string
     /// and one `Edit` per swap in OUTPUT coordinate space (suitable for `EditFold.combine`).
     public static func apply(_ swaps: [ProposedSwap], to text: String) -> (String, [Edit]) {
