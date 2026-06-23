@@ -218,6 +218,13 @@ struct OverlayView: View {
             Text(reviewQuote)
                 .font(.system(size: 14.5))
                 .foregroundStyle(ink)
+                .environment(\.openURL, OpenURLAction { url in
+                    if url.scheme == "ldswap", let id = Int(url.host ?? "") {
+                        state.reviewToggle?(id)
+                        return .handled
+                    }
+                    return .discarded
+                })
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -288,6 +295,7 @@ struct OverlayView: View {
             } else {
                 chunk.foregroundColor = inkDim
             }
+            chunk.link = URL(string: "ldswap://\(swap.id)")   // tap the word in the sentence to toggle the swap
             result += chunk
             cursor = loc + swap.range.length
         }

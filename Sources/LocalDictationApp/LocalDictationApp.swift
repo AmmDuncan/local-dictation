@@ -311,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         Task { @MainActor in
-            let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: 60)
+            let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: 180)
             let desc: String
             switch decision {
             case .keepOriginal: desc = "keepOriginal"

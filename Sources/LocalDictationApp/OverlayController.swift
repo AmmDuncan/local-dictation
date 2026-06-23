@@ -207,6 +207,9 @@ final class OverlayController {
         self.panel = panel
         panel.setContentSize(NSSize(width: panelWidth, height: panelHeight(for: phase)))
         panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution
+        // While reviewing swaps the user clicks chips/words to toggle them — don't
+        // let a click drag the window (movable-by-background reads clicks as drags).
+        panel.isMovableByWindowBackground = phase != .reviewSubstitution
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }
