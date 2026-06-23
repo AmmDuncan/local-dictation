@@ -26,6 +26,7 @@ struct ReviewPanel: View {
 
     @AppStorage(AppSettingsKeys.textReplacements) private var textReplacements = AppSettingsSnapshot.Defaults.textReplacements
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
+    @AppStorage(AppSettingsKeys.rejectedContextSubSwaps) private var rejectedContextSubSwaps = AppSettingsSnapshot.Defaults.rejectedContextSubSwaps
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
     @AppStorage(AppSettingsKeys.liveReinsertionEnabled) private var liveReinsertionEnabled = AppSettingsSnapshot.Defaults.liveReinsertionEnabled
 
@@ -246,12 +247,13 @@ struct ReviewPanel: View {
     }
 
     private func changeChip(index: Int, edit: Edit) -> some View {
-        HStack(spacing: 9) {
-            Text("HEARD")
+        let isContextSub = edit.source == .contextSub
+        return HStack(spacing: 9) {
+            Text(isContextSub ? "CONTEXT" : "HEARD")
                 .font(.system(size: 9.5, weight: .bold)).tracking(0.5)
-                .foregroundStyle(inkDim)
+                .foregroundStyle(isContextSub ? Brand.emerald : inkDim)
                 .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(Capsule().fill(ink.opacity(0.10)))
+                .background(Capsule().fill(isContextSub ? Brand.emerald.opacity(0.15) : ink.opacity(0.10)))
             Text(edit.from).strikethrough().foregroundStyle(inkDim)
             Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold)).foregroundStyle(inkDim)
             Text(edit.to).fontWeight(.semibold).foregroundStyle(Brand.emerald)
@@ -394,7 +396,11 @@ struct ReviewPanel: View {
     /// Revert a built-in swap from its change chip's × button: suppress it for next
     /// time, re-insert the original if live re-insertion is on, and drop the chip.
     private func revertChange(index: Int, edit: Edit) {
-        if let id = RuleDerivation.suppressionIdentity(for: edit) {
+        if edit.source == .contextSub {
+            // Persist the rejected swap so future context-sub passes skip this pair.
+            let id = "\(edit.from) -> \(edit.to)"
+            rejectedContextSubSwaps = SuppressionSet.toggling(id, in: rejectedContextSubSwaps, on: true)
+        } else if let id = RuleDerivation.suppressionIdentity(for: edit) {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
         maybeReinsert(span: edit.range, expecting: edit.to, replacement: edit.from)
