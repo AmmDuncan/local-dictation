@@ -33,13 +33,18 @@ public enum ContextSubstitution {
         let cand = Set(candidates.map { $0.lowercased() })
         let oi = words(original)
         let oo = words(output)
-        let si = Set(oi)
-        let so = Set(oo)
-        let added = oo.filter { !si.contains($0) }
-        let dropped = oi.filter { !so.contains($0) }
-        if added.contains(where: { !cand.contains($0) }) { return original }   // off-list
-        if oi.count - oo.count > 1 { return original }                          // collapse/truncate
-        if !dropped.isEmpty && added.isEmpty { return original }                // pure deletion
+        // Multiset diff (not set membership): a duplicated word like "it it"
+        // must register as an addition even though "it" already appears, so a
+        // repetition hallucination is caught rather than silently accepted.
+        var freq: [String: Int] = [:]
+        for w in oi { freq[w, default: 0] += 1 }
+        for w in oo { freq[w, default: 0] -= 1 }
+        let added = freq.compactMap { $0.value < 0 ? $0.key : nil }   // present in output beyond original
+        let droppedReal = freq.contains { $0.value > 0 }              // an original word vanished
+        if added.contains(where: { !cand.contains($0) }) { return original }   // off-list or hallucinated dup
+        if oi.count - oo.count > 1 { return original }                          // collapse / truncation
+        if oo.count - oi.count > 1 { return original }                          // unbounded expansion
+        if droppedReal && added.isEmpty { return original }                     // pure deletion
         return output
     }
 }
@@ -65,7 +70,9 @@ extension ContextSubstitution {
     }
 
     private static func isWhitespace(_ c: unichar) -> Bool {
-        c == 32 || c == 9 || c == 10 || c == 13
+        if c == 32 || c == 9 || c == 10 || c == 13 { return true }
+        guard let scalar = Unicode.Scalar(c) else { return false }
+        return Character(scalar).isWhitespace   // U+00A0, U+2009, U+2003, … as LLMs emit
     }
 
     private static func norm(_ t: String) -> String { words(t).joined(separator: " ") }
@@ -94,7 +101,7 @@ extension ContextSubstitution {
             let (a, b) = found ?? (ot.count - i, gt.count - j)
             swaps.append(makeSwap(ot, gt, i, a, j, b, originalNS))
             i += max(a, 0); j += max(b, 0)
-            if a == 0 && b == 0 { break }
+            if a == 0 && b == 0 { break }  // defensive: guarantee forward progress (unreachable today)
         }
         if i < ot.count || j < gt.count {
             swaps.append(makeSwap(ot, gt, i, ot.count - i, j, gt.count - j, originalNS))

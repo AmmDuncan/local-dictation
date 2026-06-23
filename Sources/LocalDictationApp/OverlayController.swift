@@ -28,15 +28,24 @@ final class OverlayState {
     var pendingSwaps: [PendingSwap] = []
     var countdownTotal: TimeInterval = 5
     var countdownRemaining: TimeInterval = 5
+    /// The held transcript shown in the review card (swaps rendered inline).
+    var reviewText: String = ""
+    /// True while the auto-apply countdown runs; flips false the moment the user
+    /// toggles a swap (manual mode — resolve via Apply / Keep).
+    var countdownActive: Bool = true
 
     struct PendingSwap: Identifiable, Equatable {
-        let id: Int            // 1-based index = the number key
+        let id: Int            // 1-based index, shown as the row number
+        let range: NSRange     // UTF-16 span in `reviewText`, for inline underlining
         let from: String
         let to: String
         var accepted: Bool = true
     }
 
     @ObservationIgnored var action: (() -> Void)?
+    @ObservationIgnored var reviewToggle: ((Int) -> Void)?
+    @ObservationIgnored var reviewApply: (() -> Void)?
+    @ObservationIgnored var reviewKeep: (() -> Void)?
 }
 
 @MainActor
@@ -63,7 +72,7 @@ final class OverlayController {
         switch phase {
         case .listening: 226  // taller for the 3-line tailing transcript + draft eyebrow
         case .transcribing: 130
-        case .reviewSubstitution: 260
+        case .reviewSubstitution: min(400, 234 + CGFloat(max(1, state.pendingSwaps.count)) * 26)
         case .done: 220
         case .error: 194
         case .cancelled: 120
@@ -103,11 +112,13 @@ final class OverlayController {
         present(phase: .cancelled, title: "Cancelled", detail: "Nothing was typed")
     }
 
-    func showReviewSubstitution(swaps: [OverlayState.PendingSwap], countdown: TimeInterval) {
+    func showReviewSubstitution(text: String, swaps: [OverlayState.PendingSwap], countdown: TimeInterval) {
         stopLevelUpdates()
+        state.reviewText = text
         state.pendingSwaps = swaps
         state.countdownTotal = countdown
         state.countdownRemaining = countdown
+        state.countdownActive = true
         present(phase: .reviewSubstitution, title: "Review swaps before typing", detail: "")
     }
 
@@ -118,10 +129,20 @@ final class OverlayController {
         state.countdownRemaining = remaining
     }
 
-    /// Install the closure the "↵ Apply now" button (and ↵ key) invoke.
-    func setReviewApplyAction(_ action: @escaping () -> Void) {
+    /// Wire the review overlay's mouse interactions back to the confirmer.
+    func setReviewActions(toggle: @escaping (Int) -> Void,
+                          apply: @escaping () -> Void,
+                          keep: @escaping () -> Void) {
         guard state.phase == .reviewSubstitution else { return }
-        state.action = action
+        state.reviewToggle = toggle
+        state.reviewApply = apply
+        state.reviewKeep = keep
+    }
+
+    /// The user engaged a toggle — stop the auto-apply countdown (manual mode).
+    func markCountdownInactive() {
+        guard state.phase == .reviewSubstitution else { return }
+        state.countdownActive = false
     }
 
     func togglePendingSwap(id: Int) {
@@ -160,6 +181,14 @@ final class OverlayController {
             state.action = nil
         }
         if phase != .done { state.swappedRanges = [] }
+        if phase != .reviewSubstitution {
+            state.pendingSwaps = []
+            state.reviewText = ""
+            state.reviewToggle = nil
+            state.reviewApply = nil
+            state.reviewKeep = nil
+            state.countdownActive = true
+        }
         state.phase = phase
         state.title = title
         state.detail = detail

@@ -89,6 +89,9 @@ struct LocalDictationCoreTestRunner {
         await suite.run("substitution request body shape", testRequestBodyShape)
         await suite.run("substitution parseContent", testParseContent)
         await suite.run("contextSubstitute folds into segmentA", testContextSubstituteFoldsIntoSegmentA)
+        await suite.run("guard rejects non-candidate duplication", testGuardRejectsNonCandidateDuplication)
+        await suite.run("guard rejects expansion", testGuardRejectsExpansion)
+        await suite.run("diff handles NBSP whitespace", testDiffUnicodeWhitespace)
         suite.finish()
     }
 }
@@ -1693,6 +1696,17 @@ private func testGuardCaseInsensitiveCandidate() throws {
     let out = ContextSubstitution.guardOutput("ping me on Slack", original: "ping me on slock", candidates: ["slack"])
     try expect(out == "ping me on Slack", "candidate match is case-insensitive")
 }
+private func testGuardRejectsNonCandidateDuplication() throws {
+    // A repeated non-candidate word must be caught by the multiset guard (a plain
+    // set would see "push" already present and miss the duplication).
+    let out = ContextSubstitution.guardOutput("push push it", original: "push it", candidates: ["it"])
+    try expect(out == "push it", "duplicated non-candidate word must reject")
+}
+private func testGuardRejectsExpansion() throws {
+    // Adding more than one word — even candidate words — is unbounded expansion.
+    let out = ContextSubstitution.guardOutput("type it right now", original: "type it", candidates: ["right", "now"])
+    try expect(out == "type it", "expanding output by >1 word must reject")
+}
 
 private func testDiffSingleSwap() throws {
     let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "deploy it to Vercel")
@@ -1720,6 +1734,13 @@ private func testDiffNoChange() throws {
 private func testDiffIgnoresCaseOnlyTokens() throws {
     let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "Deploy it to Vercel")
     try expect(swaps.count == 1 && swaps[0].to == "Vercel", "case-only differences are not swaps")
+}
+private func testDiffUnicodeWhitespace() throws {
+    // A non-breaking space in the guarded output must still tokenize as a word
+    // boundary, so the swap is found cleanly instead of merging two words.
+    let swaps = ContextSubstitution.diffSwaps(original: "deploy to versal", guarded: "deploy to\u{00A0}Vercel")
+    try expect(swaps.count == 1, "NBSP must not merge tokens")
+    try expect(swaps[0].from == "versal" && swaps[0].to == "Vercel", "clean swap across NBSP")
 }
 
 private func testApplySingle() throws {

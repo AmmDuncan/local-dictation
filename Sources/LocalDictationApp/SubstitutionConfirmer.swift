@@ -2,15 +2,18 @@ import AppKit
 import Foundation
 import LocalDictationCore
 
-/// Drives the `.reviewSubstitution` overlay phase: presents the proposed swaps,
-/// ticks the countdown, maps number keys to per-swap toggles, ↵ to apply now,
-/// esc to keep the original, and a timeout to apply the current toggle state.
-/// The continuation resolves exactly once.
+/// Drives the `.reviewSubstitution` overlay phase. Shows the held transcript with
+/// the proposed swaps inline and runs a countdown that auto-applies ALL swaps if
+/// the user does nothing. The moment the user toggles a swap, the countdown is
+/// cancelled — they've taken control, so nothing auto-applies and they resolve
+/// explicitly via Apply / Keep. Mouse-driven: the overlay is a non-focused HUD,
+/// so it can't capture keystrokes without stealing focus or swallowing the user's
+/// typing — hands-free rejection is instead available afterwards via the ⌃⌥Z
+/// review panel. The continuation resolves exactly once.
 @MainActor
 final class SubstitutionConfirmer: SubstitutionConfirming {
     private let overlay: OverlayController
     private var countdownTask: Task<Void, Never>?
-    private var keyMonitor: Any?
     private var continuation: CheckedContinuation<SubstitutionDecision, Never>?
     /// Original proposals keyed by their 1-based id, so the accepted subset
     /// resolves back to swaps that still carry real UTF-16 ranges.
@@ -21,23 +24,42 @@ final class SubstitutionConfirmer: SubstitutionConfirming {
     nonisolated func confirm(text: String, swaps: [ProposedSwap], countdown: TimeInterval) async -> SubstitutionDecision {
         await withCheckedContinuation { cont in
             Task { @MainActor in
-                self.start(swaps: swaps, countdown: countdown, continuation: cont)
+                self.start(text: text, swaps: swaps, countdown: countdown, continuation: cont)
             }
         }
     }
 
-    private func start(swaps: [ProposedSwap], countdown: TimeInterval, continuation: CheckedContinuation<SubstitutionDecision, Never>) {
+    private func start(text: String, swaps: [ProposedSwap], countdown: TimeInterval,
+                       continuation: CheckedContinuation<SubstitutionDecision, Never>) {
+        // Defensive: a prior confirm must never be left dangling. finishCurrent
+        // serializes dictations so re-entry shouldn't happen, but if it ever does,
+        // resolve the NEW caller immediately rather than orphaning either
+        // continuation (an orphaned CheckedContinuation hangs the workflow forever).
+        guard self.continuation == nil else {
+            continuation.resume(returning: .keepOriginal)
+            return
+        }
         self.continuation = continuation
         var byID: [Int: ProposedSwap] = [:]
         let pending = swaps.enumerated().map { idx, swap -> OverlayState.PendingSwap in
             byID[idx + 1] = swap
-            return OverlayState.PendingSwap(id: idx + 1, from: swap.from, to: swap.to)
+            return OverlayState.PendingSwap(id: idx + 1, range: swap.range, from: swap.from, to: swap.to)
         }
         swapsByID = byID
-        overlay.showReviewSubstitution(swaps: pending, countdown: countdown)
-        overlay.setReviewApplyAction { [weak self] in self?.resolveWithCurrentToggles() }
-        armKeyMonitor()
+        overlay.showReviewSubstitution(text: text, swaps: pending, countdown: countdown)
+        overlay.setReviewActions(
+            toggle: { [weak self] id in self?.onToggle(id) },
+            apply: { [weak self] in self?.resolveWithCurrentToggles() },
+            keep: { [weak self] in self?.resolve(.keepOriginal) }
+        )
         armCountdown(countdown)
+    }
+
+    /// First interaction cancels the countdown: the user has taken control, so
+    /// nothing auto-applies — they decide explicitly via Apply / Keep.
+    private func onToggle(_ id: Int) {
+        cancelCountdown()
+        overlay.togglePendingSwap(id: id)
     }
 
     private func armCountdown(_ countdown: TimeInterval) {
@@ -55,51 +77,25 @@ final class SubstitutionConfirmer: SubstitutionConfirming {
         }
     }
 
-    private func armKeyMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            return self.handle(event) ? nil : event
-        }
-    }
-
-    /// Returns true if the event was consumed.
-    private func handle(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 53:  // esc
-            resolve(.keepOriginal)
-            return true
-        case 36, 76:  // return, keypad enter
-            resolveWithCurrentToggles()
-            return true
-        default:
-            if let chars = event.charactersIgnoringModifiers, let n = Int(chars), n >= 1 {
-                overlay.togglePendingSwap(id: n)
-                return true
-            }
-            return false
-        }
+    private func cancelCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        overlay.markCountdownInactive()
     }
 
     private func resolveWithCurrentToggles() {
         let accepted = overlay.acceptedPendingSwaps
-        guard !accepted.isEmpty else { resolve(.keepOriginal); return }
-        // Map the still-accepted pending swaps (by id) back to the original
-        // proposals, which carry the real UTF-16 ranges needed to apply them.
         let swaps = accepted.compactMap { swapsByID[$0.id] }
         guard !swaps.isEmpty else { resolve(.keepOriginal); return }
         resolve(.apply(swaps))
     }
 
-    /// Resolve exactly once; tear down the timer, key monitor, and overlay.
+    /// Resolve exactly once; tear down the timer and overlay.
     private func resolve(_ decision: SubstitutionDecision) {
         guard let cont = continuation else { return }
         continuation = nil
         countdownTask?.cancel()
         countdownTask = nil
-        if let monitor = keyMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
-        }
         overlay.hide()
         cont.resume(returning: decision)
     }

@@ -529,11 +529,16 @@ final class AppModel {
         let countdown = settings.contextSubstitutionCountdown
         let confirmer = substitutionConfirmer
         let manager = llamaManager
+        // Swaps the user has already rejected from a CONTEXT chip — never re-propose
+        // them (keyed "<from> -> <to>", matching ReviewPanel.revertChange).
+        let ctxSubSuppressed = SuppressionSet.decode(settings.rejectedContextSubSwaps)
         let contextSubstitute: (@Sendable (String) async -> (String, [Edit]))? = (ctxSubEnabled && !candidates.isEmpty)
             ? { @Sendable text in
                 guard let baseURL = await manager.awaitReady(timeout: 30) else { return (text, []) }
                 let engine = ContextSubstituteEngine(baseURL: baseURL, candidates: candidates)
-                let swaps = await engine.proposals(for: text)
+                let swaps = await engine.proposals(for: text).filter {
+                    !ctxSubSuppressed.contains("\($0.from) -> \($0.to)")
+                }
                 guard !swaps.isEmpty else { return (text, []) }
                 let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: countdown)
                 switch decision {

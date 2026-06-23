@@ -211,6 +211,8 @@ struct OverlayView: View {
 
     // MARK: review substitution
 
+    private var acceptedCount: Int { state.pendingSwaps.filter(\.accepted).count }
+
     private var reviewSubstitutionBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(reviewQuote)
@@ -230,32 +232,56 @@ struct OverlayView: View {
             }
 
             HStack(spacing: 12) {
-                CountdownRing(
-                    progress: state.countdownTotal > 0 ? state.countdownRemaining / state.countdownTotal : 0,
-                    seconds: state.countdownRemaining
-                )
-                .frame(width: 34, height: 34)
-
-                Text("Applying in \(Int(ceil(state.countdownRemaining)))s")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(inkDim)
+                if state.countdownActive {
+                    CountdownRing(
+                        progress: state.countdownTotal > 0 ? state.countdownRemaining / state.countdownTotal : 0,
+                        seconds: state.countdownRemaining
+                    )
+                    .frame(width: 34, height: 34)
+                    Text("Applying all in \(Int(ceil(state.countdownRemaining)))s")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(inkDim)
+                } else {
+                    Text(acceptedCount == 0 ? "All kept as-is" : "\(acceptedCount) of \(state.pendingSwaps.count) on")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(inkDim)
+                }
 
                 Spacer(minLength: 8)
 
-                Button("↵ Apply now") { state.action?() }
+                Button { state.reviewKeep?() } label: {
+                    Text("Keep original")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(inkDim)
+                }
+                .buttonStyle(.plain)
+
+                Button(acceptedCount == 0 ? "Apply" : "Apply \(acceptedCount)") { state.reviewApply?() }
                     .buttonStyle(SignalButtonStyle())
+                    .disabled(acceptedCount == 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The transcript reconstructed from the proposed swaps: each swap's target is
-    /// shown emerald-underlined while accepted, struck/dim while toggled off.
+    /// The held transcript with each swap rendered INLINE in its sentence: the
+    /// emerald-underlined target while accepted, the original word dimmed while
+    /// toggled off — so the user judges the swap in context, not in isolation.
     private var reviewQuote: AttributedString {
+        let ns = state.reviewText as NSString
+        guard ns.length > 0 else {
+            return AttributedString(state.pendingSwaps.map { $0.accepted ? $0.to : $0.from }.joined(separator: " "))
+        }
+        let swaps = state.pendingSwaps.sorted { $0.range.location < $1.range.location }
         var result = AttributedString("“")
-        for (idx, swap) in state.pendingSwaps.enumerated() {
-            if idx > 0 { result += AttributedString(" · ") }
-            var chunk = AttributedString(swap.accepted ? swap.to : swap.from)
+        var cursor = 0
+        for swap in swaps {
+            let loc = swap.range.location
+            guard loc >= cursor, loc + swap.range.length <= ns.length else { continue }
+            if loc > cursor {
+                result += AttributedString(ns.substring(with: NSRange(location: cursor, length: loc - cursor)))
+            }
+            var chunk = AttributedString(swap.accepted ? swap.to : ns.substring(with: swap.range))
             if swap.accepted {
                 chunk.underlineStyle = .single
                 chunk.foregroundColor = Brand.emerald
@@ -263,6 +289,10 @@ struct OverlayView: View {
                 chunk.foregroundColor = inkDim
             }
             result += chunk
+            cursor = loc + swap.range.length
+        }
+        if cursor < ns.length {
+            result += AttributedString(ns.substring(from: cursor))
         }
         result += AttributedString("”")
         return result
@@ -297,6 +327,8 @@ struct OverlayView: View {
 
             Spacer(minLength: 0)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { state.reviewToggle?(swap.id) }
     }
 
     private var doneBody: some View {
