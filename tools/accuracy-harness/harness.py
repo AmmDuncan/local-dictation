@@ -50,6 +50,7 @@ CONFIGS = {
     "mc96":     _BASE + ["-mc", "96"],
     "mc128":    _BASE + ["-mc", "128"],
     "improved": _BASE + ["-sns", "-nth", "0.70", "-mc", "64"],
+    "noprompt": _DECODE + _VAD,  # VAD on, no vocab prompt — for the real-prose A/B
     # no-VAD family (isolate -sns/-nth effect on hallucination — VAD masks it)
     "nv_base":  _BASE_NOVAD,
     "nv_sns":   _BASE_NOVAD + ["-sns"],
@@ -262,17 +263,76 @@ def report(records=None):
         print("  (none — clean across all configs)", flush=True)
 
 
+def flac_to_wav(flac):
+    """Convert a LibriSpeech .flac to 16 kHz mono WAV (cached by source path)."""
+    key = hashlib.md5(("f|" + flac).encode()).hexdigest()[:16]
+    wav = os.path.join(WAVS, key + ".wav")
+    if os.path.exists(wav) and os.path.getsize(wav) > 1000:
+        return wav
+    subprocess.run(["ffmpeg", "-y", "-i", flac, "-ar", "16000", "-ac", "1",
+                    "-acodec", "pcm_s16le", wav], check=True, capture_output=True, timeout=60)
+    return wav
+
+
+def load_libri(libri_dir, limit):
+    """Collect (uttid, flac_path, reference) from a LibriSpeech tree, sorted, capped."""
+    items = []
+    for root, _, files in os.walk(libri_dir):
+        for f in files:
+            if f.endswith(".trans.txt"):
+                for line in open(os.path.join(root, f)):
+                    uttid, _, ref = line.strip().partition(" ")
+                    flac = os.path.join(root, uttid + ".flac")
+                    if ref and os.path.exists(flac):
+                        items.append((uttid, flac, ref))
+    items.sort()
+    return items[:limit]
+
+
+def run_libri(libri_dir, limit, configs):
+    """Real-WER baseline on real human read speech (LibriSpeech) + a with/without-prompt
+    A/B to confirm the dev-vocab prompt doesn't hurt real prose."""
+    items = load_libri(libri_dir, limit)
+    if not items:
+        sys.exit(f"no LibriSpeech utterances under {libri_dir}")
+    print(f"model={os.path.basename(MODEL)} libri={len(items)} utts configs={configs}", flush=True)
+    open(RESULTS, "w").close()
+    agg = {c: [] for c in configs}
+    with open(RESULTS, "a") as out:
+        for i, (uttid, flac, ref) in enumerate(items, 1):
+            wav = flac_to_wav(flac)
+            for cfg in configs:
+                ins = strip_for_insertion(transcribe(wav, CONFIGS[cfg]))
+                e = round(wer(ref, ins), 3)
+                agg[cfg].append((e, norm(ref) == norm(ins)))
+                out.write(json.dumps({"src": "libri", "config": cfg, "uttid": uttid,
+                                      "expected": ref, "insertable": ins, "wer": e}) + "\n")
+            if i % 25 == 0 or i == len(items):
+                print(f"  [{i}/{len(items)}]", flush=True)
+    print("\n=== LibriSpeech real-WER (real human read speech) ===", flush=True)
+    print(f"{'config':<10} {'utts':>6} {'exact':>8} {'meanWER':>9}")
+    for cfg in configs:
+        rs = agg[cfg]
+        ex = sum(1 for _, x in rs if x)
+        mw = sum(e for e, _ in rs) / len(rs) if rs else 0
+        print(f"{cfg:<10} {len(rs):>6} {f'{ex}/{len(rs)}':>8} {mw:>9.4f}", flush=True)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--configs", default="baseline,improved")
     ap.add_argument("--voices", choices=["primary", "multi"], default="primary")
     ap.add_argument("--report", action="store_true", help="re-print A/B from existing results.jsonl")
+    ap.add_argument("--libri", metavar="DIR", help="LibriSpeech tree (real-speech WER mode)")
+    ap.add_argument("--limit", type=int, default=200, help="max LibriSpeech utterances")
     a = ap.parse_args()
+    cfgs = [c.strip() for c in a.configs.split(",") if c.strip()]
+    bad = [c for c in cfgs if c not in CONFIGS]
+    if bad:
+        sys.exit(f"unknown configs: {bad}; known: {list(CONFIGS)}")
     if a.report:
         report()
+    elif a.libri:
+        run_libri(a.libri, a.limit, cfgs)
     else:
-        cfgs = [c.strip() for c in a.configs.split(",") if c.strip()]
-        bad = [c for c in cfgs if c not in CONFIGS]
-        if bad:
-            sys.exit(f"unknown configs: {bad}; known: {list(CONFIGS)}")
         run(cfgs, a.voices)
