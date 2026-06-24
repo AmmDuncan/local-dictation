@@ -56,6 +56,13 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     /// audio before proceeding anyway, so a silent/broken input never hangs the
     /// start. Cold first-of-day warmup is normally well under this.
     private static let firstAudioTimeoutMillis = 1500
+    /// A mic reporting at or below this sample rate is a Bluetooth call-mode
+    /// (HFP) device — 16 kHz, vs 44.1/48 kHz for built-in/USB — which needs an
+    /// extra warmup beat before it captures cleanly.
+    private static let bluetoothSampleRateCeiling: Double = 24_000
+    /// Extra settle time after first audio for a Bluetooth (HFP) mic, before the
+    /// "Listening" cue, so the slow call-mode negotiation can't clip opening words.
+    private static let bluetoothWarmupMillis = 1000
     private var converter: AVAudioConverter?
     /// The system default input device we temporarily overrode for the current
     /// recording (to bind a preferred non-default mic), restored on stop. nil
@@ -182,11 +189,23 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
             throw AudioRecordingError.couldNotStart
         }
         setCapturing(true)
-        // Don't report "started" until the mic is actually delivering audio. On a
-        // cold first-of-day start the input hardware + CoreAudio chain take a beat
-        // to warm up, and audio spoken in that gap is lost — so the caller only
-        // shows "Listening" (the cue to speak) once this returns.
-        await awaitFirstAudio()
+        // Don't report "started" until the mic is actually delivering audio, so
+        // the "Listening" cue (shown when this returns) only appears once it's
+        // safe to speak. The two mic classes warm up very differently:
+        if inputFormat.sampleRate <= Self.bluetoothSampleRateCeiling {
+            // Bluetooth call-mode (HFP) mic — recognizable by its low sample
+            // rate. It negotiates slowly and delivers a premature first buffer,
+            // so the first-audio gate would fire too early (clipping opening
+            // words) AND adds latency on top. Instead, wait a single fixed
+            // warmup for the route to settle, then drop the negotiation-period
+            // audio. One wait, not two.
+            try? await Task.sleep(for: .milliseconds(Self.bluetoothWarmupMillis))
+            clearSamples()
+        } else {
+            // Built-in/USB (44.1k+): ready almost immediately — just wait for the
+            // first buffer (cold first-of-day warmup is normally well under 1.5s).
+            await awaitFirstAudio()
+        }
     }
 
     /// Clear the first-audio gate before a new recording. Synchronous so the lock
