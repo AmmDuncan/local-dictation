@@ -43,8 +43,6 @@ final class AppModel {
     /// Floating review panel for the Door #1 hotkey, and the last dictation it shows.
     private let reviewPanelController = ReviewPanelController()
     private var lastRecord: CorrectionRecord?
-    /// Captured target for experimental live re-insertion (nil unless enabled).
-    private var reinserter: LiveReinserter?
     /// AX window text shorter than this counts as "nothing usable" → OCR may fill in.
     private static let minVisibleTextChars = 24
     /// A cached OCR result stays usable this long; refreshes are throttled to at
@@ -252,7 +250,6 @@ final class AppModel {
         // Invalidate the previous review target: a new dictation supersedes it, and
         // if this one yields nothing the ⌥Z hotkey must not review a stale result.
         lastRecord = nil
-        reinserter = nil
 
         guard await PermissionStatus.requestMicrophoneAccess() else {
             isStarting = false
@@ -411,11 +408,6 @@ final class AppModel {
                 // text only; gated on the privacy-respecting logCorrections toggle.
                 if settings.logCorrections { CorrectionLogStore.append(record) }
                 swappedRanges = validSwapRanges(in: transcript, edits: edits.segmentA + edits.segmentB)
-                // Capture the target field NOW (before the review panel can steal focus)
-                // so an experimental live re-insertion can replace the current instance.
-                reinserter = settings.liveReinsertionEnabled
-                    ? LiveReinserter.capture(insertedText: record.inserted)
-                    : nil
             }
 
             if settings.showOverlay {
@@ -702,10 +694,7 @@ final class AppModel {
     /// until a dictation has produced a record this session.
     func presentReview() {
         guard let lastRecord else { return }
-        let reinserter = self.reinserter
-        reviewPanelController.present(record: lastRecord) { newText in
-            MainActor.assumeIsolated { _ = reinserter?.replace(with: newText) }
-        }
+        reviewPanelController.present(record: lastRecord)
     }
 
     /// Edit ranges that still line up with the displayed text — only swaps whose

@@ -1,3 +1,4 @@
+import AppKit
 import LocalDictationCore
 import SwiftUI
 
@@ -11,9 +12,6 @@ import SwiftUI
 struct ReviewPanel: View {
     let record: CorrectionRecord
     var onClose: () -> Void
-    /// Provided only by the Door #1 floating panel: re-insert the corrected full text
-    /// into the still-focused field (experimental). Nil from the Learn-tab sheet.
-    var onReinsert: ((String) -> Void)?
     /// Lets the host panel resize to the card's natural height as the sentence
     /// measurement and selection state settle. No-op for the Learn-tab sheet.
     var onSizeChange: (CGSize) -> Void = { _ in }
@@ -28,7 +26,6 @@ struct ReviewPanel: View {
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
     @AppStorage(AppSettingsKeys.rejectedContextSubSwaps) private var rejectedContextSubSwaps = AppSettingsSnapshot.Defaults.rejectedContextSubSwaps
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
-    @AppStorage(AppSettingsKeys.liveReinsertionEnabled) private var liveReinsertionEnabled = AppSettingsSnapshot.Defaults.liveReinsertionEnabled
 
     @Environment(\.colorScheme) private var scheme
 
@@ -43,6 +40,9 @@ struct ReviewPanel: View {
     /// Indices into `swaps` the user has reverted this session — drops the chip and
     /// updates the count without mutating the persisted record.
     @State private var reverted: Set<Int> = []
+    /// The running corrected full text as the user makes fixes — copied to the
+    /// clipboard so they can paste it over what was typed. Nil until a first fix.
+    @State private var correctedText: String?
     /// Natural height of the sentence content, measured so the box can cap + scroll.
     @State private var sentenceHeight: CGFloat = 0
     private let sentenceMaxHeight: CGFloat = 184
@@ -420,9 +420,7 @@ struct ReviewPanel: View {
                 Toggle("Also bias recognition toward this word", isOn: $alsoBias)
                     .font(.system(size: 12))
                     .tint(Brand.emerald)
-                Text(liveReinsertionEnabled
-                     ? "Fixes the current text and future dictations."
-                     : "Applies to your next dictations (turn on live re-insertion in the Learn tab to also fix the text you just typed).")
+                Text("Teaches it for next time and copies the corrected text — ⌘V to paste it over what you typed.")
                     .font(.system(size: 11)).foregroundStyle(inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -444,20 +442,20 @@ struct ReviewPanel: View {
         } else if let id = RuleDerivation.suppressionIdentity(for: edit) {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
-        maybeReinsert(span: edit.range, expecting: edit.to, replacement: edit.from)
+        copyCorrection(expecting: edit.to, replacement: edit.from)
         reverted.insert(index)
         clearSelection()
-        savedNote = "Reverted “\(edit.from)” → “\(edit.to)”"
+        savedNote = "Reverted “\(edit.from)” → “\(edit.to)” · copied, ⌘V to replace"
     }
 
     /// Apply the editor for the selected span: re-point a built-in swap to the user's
-    /// value, or teach a fix for a plain span. Both re-insert into the current field
-    /// when live re-insertion is on (see `maybeReinsert`).
+    /// value, or teach a fix for a plain span. Both teach for next time and copy the
+    /// corrected text to the clipboard (see `copyCorrection`).
     private func applyEditor(_ range: ClosedRange<Int>) {
         if let edit = singleSwap(in: range) {
             applyChange(edit, to: editValue)
         } else {
-            applyTeach(heard: selectedText(range), correction: editValue, span: unionRange(range))
+            applyTeach(heard: selectedText(range), correction: editValue)
         }
     }
 
@@ -467,27 +465,29 @@ struct ReviewPanel: View {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
         appendTeach(heard: edit.from, correction: newValue)
-        maybeReinsert(span: edit.range, expecting: edit.to, replacement: trimmed(newValue))
+        copyCorrection(expecting: edit.to, replacement: trimmed(newValue))
         clearSelection()
-        savedNote = "Learned “\(edit.from)” → “\(trimmed(newValue))”"
+        savedNote = "Learned “\(edit.from)” → “\(trimmed(newValue))” · copied, ⌘V to replace"
     }
 
-    private func applyTeach(heard: String, correction: String, span: NSRange) {
+    private func applyTeach(heard: String, correction: String) {
         appendTeach(heard: heard, correction: correction)
-        maybeReinsert(span: span, expecting: heard, replacement: trimmed(correction))
+        copyCorrection(expecting: heard, replacement: trimmed(correction))
         clearSelection()
-        savedNote = "Learned “\(heard)” → “\(trimmed(correction))”"
+        savedNote = "Learned “\(heard)” → “\(trimmed(correction))” · copied, ⌘V to replace"
     }
 
-    /// Experimental: re-insert the corrected full text into the current field, but
-    /// only when the span still lines up with what was inserted (no polish/replacement
-    /// drift) — otherwise it's learn-for-next-time only.
-    private func maybeReinsert(span: NSRange, expecting: String, replacement: String) {
-        guard liveReinsertionEnabled, let onReinsert, !replacement.isEmpty else { return }
-        let ns = record.inserted as NSString
-        guard span.location >= 0, span.location + span.length <= ns.length,
-              ns.substring(with: span) == expecting else { return }
-        onReinsert(ns.replacingCharacters(in: span, with: replacement))
+    /// Copy the running corrected full text to the clipboard so the user can paste it
+    /// over what was typed (⌘V) — universal, unlike an AX in-place replace which only
+    /// landed in some apps. Each fix composes onto the previous via a first-match
+    /// replacement; the clipboard ends holding the latest fully-corrected text.
+    private func copyCorrection(expecting: String, replacement: String) {
+        guard !replacement.isEmpty else { return }
+        var text = correctedText ?? record.inserted
+        if let r = text.range(of: expecting) { text.replaceSubrange(r, with: replacement) }
+        correctedText = text
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func appendTeach(heard: String, correction: String) {

@@ -61,7 +61,6 @@ struct LocalDictationCoreTestRunner {
         await suite.run("CorrectionLog: changeCount, codable, cap, pending", testCorrectionLog)
         await suite.run("BuiltInCorrections: stable identities match revert convention", testBuiltInCorrections)
         await suite.run("Apply path consults the suppression set", testSuppressionConsult)
-        await suite.run("Reinsertion decision: exact-match replace, else abort", testReinsertionDecision)
         await suite.run("Span selection: grow/shrink/toggle/adjacent/separated", testSpanSelection)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
@@ -1479,13 +1478,6 @@ private func testSuppressionConsult() throws {
     )
 }
 
-private func testReinsertionDecision() throws {
-    try expect(ReinsertionDecision.canReplace(inserted: "push to main", readBack: "push to main"), "exact match -> replace")
-    try expect(!ReinsertionDecision.canReplace(inserted: "push to main", readBack: "push to maine"), "drifted text -> abort")
-    try expect(!ReinsertionDecision.canReplace(inserted: "main", readBack: "main "), "trailing-space mismatch -> abort")
-    try expect(!ReinsertionDecision.canReplace(inserted: "x", readBack: nil), "no read-back -> abort")
-    try expect(!ReinsertionDecision.canReplace(inserted: "", readBack: ""), "empty inserted -> abort")
-}
 
 private func testInsertionFormatter() throws {
     try expect(

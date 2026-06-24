@@ -10,7 +10,6 @@ struct LearnTab: View {
     @Binding var logCorrections: Bool
     @Binding var textReplacements: String
     @Binding var rejectedBuiltInSwaps: String
-    @Binding var liveReinsertionEnabled: Bool
 
     @State private var records: [CorrectionRecord] = []
     @State private var newFrom = ""
@@ -106,14 +105,6 @@ struct LearnTab: View {
                 }
             } footer: {
                 Text("Applied only inside a terminal when you're typing a git command — “main” is often misheard as “me”. Left alone everywhere else.")
-            }
-
-            Section {
-                Toggle(isOn: $liveReinsertionEnabled) {
-                    ExperimentalLabel("Replace the current text when I fix it")
-                }
-            } footer: {
-                Text("When you fix a dictation right after speaking it (⌥Z), also replace the text already typed — not just learn for next time. Best-effort: only in apps that support it, and only if you haven't moved the cursor. Off by default.")
             }
         }
         .formStyle(.grouped)

@@ -9,13 +9,12 @@ import SwiftUI
 final class ReviewPanelController {
     private var panel: NSPanel?
 
-    func present(record: CorrectionRecord, onReinsert: ((String) -> Void)? = nil) {
+    func present(record: CorrectionRecord) {
         let panel = panel ?? makePanel()
         self.panel = panel
         let hosting = NSHostingView(rootView: ReviewPanel(
             record: record,
             onClose: { [weak panel] in panel?.orderOut(nil) },
-            onReinsert: onReinsert,
             onSizeChange: { [weak panel] size in
                 guard let panel, size.width > 100, size.height > 100 else { return }
                 // Track the card's natural size as the sentence measure + selection

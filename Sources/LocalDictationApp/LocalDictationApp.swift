@@ -209,9 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         // Resting state, then the editor state (a multi-word selection) so both can
         // be reviewed off-screen.
-        writePanelPNG(ReviewPanel(record: record, onClose: {}, onReinsert: nil, staticHeight: true), to: path)
+        writePanelPNG(ReviewPanel(record: record, onClose: {}, staticHeight: true), to: path)
         writePanelPNG(
-            ReviewPanel(record: record, onClose: {}, onReinsert: nil, staticHeight: true, previewSelectedRange: 10...11),
+            ReviewPanel(record: record, onClose: {}, staticHeight: true, previewSelectedRange: 10...11),
             to: path.replacingOccurrences(of: ".png", with: "-editor.png")
         )
         exit(0)
@@ -284,7 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("off", nil),
         ]
         for (suffix, outcome) in states {
-            writePanelPNG(ReviewPanel(record: record(outcome), onClose: {}, onReinsert: nil, staticHeight: true),
+            writePanelPNG(ReviewPanel(record: record(outcome), onClose: {}, staticHeight: true),
                           to: variant(suffix))
         }
         let hud = OverlayState()
