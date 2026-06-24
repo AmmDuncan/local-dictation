@@ -183,4 +183,6 @@ LD_MODEL=~/models/ggml-large-v3-turbo.bin \
 
 ### The one-line strategy
 
-The big multipliers (engine swaps, fine-tuning, denoise, grammar decode) are all either rejected on evidence or net-negative for *this* stack. The durable path is **(1) ship the measured `-mc 64`**, **(2) build the `verbose_json` confidence foundation once** and use it to make the substitution corrector *safe* (phonetic + confidence AND-gate) rather than chasing raw WER, and **(3) let the correction log compound** into the deterministic map behind a strict promotion gate. Plus two cheap decisive A/Bs (`-bs 3`, VAD v6) to retire open questions.
+The big multipliers (engine swaps, fine-tuning, denoise, grammar decode) are all either rejected on evidence or net-negative for *this* stack. The durable path is **(1) build the `verbose_json` confidence foundation once** and use it to make the substitution corrector *safe* (phonetic + confidence gate) rather than chasing raw WER, and **(2) let the correction log compound** into the deterministic map behind a strict promotion gate. (`-mc 64` is **measured & rejected** — see §2/§6; VAD v6 is **shipped** in v0.4.9.)
+
+> **→ Continued in [accuracy-improvement-research-round2.md](accuracy-improvement-research-round2.md)** (post-v0.4.9): net-new levers, the newest-model frontier check (Qwen3-ASR/MLX), and concrete implementation of the confidence + phonetic-gate path. Recommended next experiment: the `verbose_json` confidence calibration, with a hard kill-criterion.
