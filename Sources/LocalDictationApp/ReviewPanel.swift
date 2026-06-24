@@ -1,3 +1,4 @@
+import AppKit
 import LocalDictationCore
 import SwiftUI
 
@@ -11,9 +12,6 @@ import SwiftUI
 struct ReviewPanel: View {
     let record: CorrectionRecord
     var onClose: () -> Void
-    /// Provided only by the Door #1 floating panel: re-insert the corrected full text
-    /// into the still-focused field (experimental). Nil from the Learn-tab sheet.
-    var onReinsert: ((String) -> Void)?
     /// Lets the host panel resize to the card's natural height as the sentence
     /// measurement and selection state settle. No-op for the Learn-tab sheet.
     var onSizeChange: (CGSize) -> Void = { _ in }
@@ -26,15 +24,15 @@ struct ReviewPanel: View {
 
     @AppStorage(AppSettingsKeys.textReplacements) private var textReplacements = AppSettingsSnapshot.Defaults.textReplacements
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
+    @AppStorage(AppSettingsKeys.rejectedContextSubSwaps) private var rejectedContextSubSwaps = AppSettingsSnapshot.Defaults.rejectedContextSubSwaps
     @AppStorage(AppSettingsKeys.customVocabulary) private var customVocabulary = AppSettingsSnapshot.Defaults.customVocabulary
-    @AppStorage(AppSettingsKeys.liveReinsertionEnabled) private var liveReinsertionEnabled = AppSettingsSnapshot.Defaults.liveReinsertionEnabled
 
     @Environment(\.colorScheme) private var scheme
 
     @State private var anchor: Int?
     @State private var head: Int?
     @State private var editValue = ""
-    @State private var alsoBias = false
+    @State private var alsoBias = true  // opt-out; defaults on (rationale at appendTeach)
     /// Transient "✓ Learned X → Y" confirmation after an apply, so saving a fix —
     /// especially from a past (history) dictation, where it only teaches forward and
     /// rewrites nothing on screen — isn't silent.
@@ -42,6 +40,9 @@ struct ReviewPanel: View {
     /// Indices into `swaps` the user has reverted this session — drops the chip and
     /// updates the count without mutating the persisted record.
     @State private var reverted: Set<Int> = []
+    /// The running corrected full text as the user makes fixes — copied to the
+    /// clipboard so they can paste it over what was typed. Nil until a first fix.
+    @State private var correctedText: String?
     /// Natural height of the sentence content, measured so the box can cap + scroll.
     @State private var sentenceHeight: CGFloat = 0
     private let sentenceMaxHeight: CGFloat = 184
@@ -137,8 +138,49 @@ struct ReviewPanel: View {
                 Text("Here's what I typed — corrections highlighted.")
                     .font(.system(size: 13))
                     .foregroundStyle(inkDim)
+                polishProvenanceLine
             }
             Spacer(minLength: 8)
+        }
+    }
+
+    /// One quiet, always-present line stating what the LLM polish did this dictation
+    /// — the on-demand answer to "is it actually doing anything?" on the one screen
+    /// opened to scrutinise a result. Glyph SHAPE (not colour) distinguishes the
+    /// states, and each carries a VoiceOver label. `guardRejected` is framed as the
+    /// faithfulness guard working FOR the user, not a failure.
+    @ViewBuilder
+    private var polishProvenanceLine: some View {
+        let p = polishProvenance
+        HStack(spacing: 5) {
+            Image(systemName: p.glyph).font(.system(size: 11))
+            Text(p.text).font(.system(size: 12))
+        }
+        .foregroundStyle(p.positive ? Brand.emerald : inkDim)
+        .padding(.top, 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(p.spoken)
+    }
+
+    private struct PolishProvenance {
+        let glyph: String
+        let text: String
+        let positive: Bool
+        let spoken: String
+    }
+
+    private var polishProvenance: PolishProvenance {
+        switch record.polishOutcome {
+        case .applied:
+            return PolishProvenance(glyph: "checkmark.circle.fill", text: "Polished on-device", positive: true, spoken: "Polished on device")
+        case .unchanged:
+            return PolishProvenance(glyph: "checkmark.circle", text: "Polished on-device — nothing to change", positive: false, spoken: "Polished on device, nothing to change")
+        case .guardRejected:
+            return PolishProvenance(glyph: "exclamationmark.shield", text: "Polish held back — kept your exact words", positive: false, spoken: "Polish held back, kept your exact words")
+        case .unavailable:
+            return PolishProvenance(glyph: "circle", text: "Polish unavailable — model not loaded", positive: false, spoken: "Polish unavailable, model not loaded")
+        case .none:
+            return PolishProvenance(glyph: "minus", text: "Polish off", positive: false, spoken: "Polish off")
         }
     }
 
@@ -246,12 +288,13 @@ struct ReviewPanel: View {
     }
 
     private func changeChip(index: Int, edit: Edit) -> some View {
-        HStack(spacing: 9) {
-            Text("HEARD")
+        let isContextSub = edit.source == .contextSub
+        return HStack(spacing: 9) {
+            Text(isContextSub ? "CONTEXT" : "HEARD")
                 .font(.system(size: 9.5, weight: .bold)).tracking(0.5)
-                .foregroundStyle(inkDim)
+                .foregroundStyle(isContextSub ? Brand.emerald : inkDim)
                 .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(Capsule().fill(ink.opacity(0.10)))
+                .background(Capsule().fill(isContextSub ? Brand.emerald.opacity(0.15) : ink.opacity(0.10)))
             Text(edit.from).strikethrough().foregroundStyle(inkDim)
             Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold)).foregroundStyle(inkDim)
             Text(edit.to).fontWeight(.semibold).foregroundStyle(Brand.emerald)
@@ -331,7 +374,7 @@ struct ReviewPanel: View {
     }
 
     private func resetEditor() {
-        alsoBias = false
+        alsoBias = true
         guard let range = selectedRange else { editValue = ""; return }
         if let edit = singleSwap(in: range) {
             editValue = edit.to  // pre-fill a change with the current value to tweak
@@ -377,9 +420,7 @@ struct ReviewPanel: View {
                 Toggle("Also bias recognition toward this word", isOn: $alsoBias)
                     .font(.system(size: 12))
                     .tint(Brand.emerald)
-                Text(liveReinsertionEnabled
-                     ? "Fixes the current text and future dictations."
-                     : "Applies to your next dictations (turn on live re-insertion in the Learn tab to also fix the text you just typed).")
+                Text("Teaches it for next time and copies the corrected text — ⌘V to paste it over what you typed.")
                     .font(.system(size: 11)).foregroundStyle(inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -394,23 +435,27 @@ struct ReviewPanel: View {
     /// Revert a built-in swap from its change chip's × button: suppress it for next
     /// time, re-insert the original if live re-insertion is on, and drop the chip.
     private func revertChange(index: Int, edit: Edit) {
-        if let id = RuleDerivation.suppressionIdentity(for: edit) {
+        if edit.source == .contextSub {
+            // Persist the rejected swap so future context-sub passes skip this pair.
+            let id = "\(edit.from) -> \(edit.to)"
+            rejectedContextSubSwaps = SuppressionSet.toggling(id, in: rejectedContextSubSwaps, on: true)
+        } else if let id = RuleDerivation.suppressionIdentity(for: edit) {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
-        maybeReinsert(span: edit.range, expecting: edit.to, replacement: edit.from)
+        copyCorrection(expecting: edit.to, replacement: edit.from)
         reverted.insert(index)
         clearSelection()
-        savedNote = "Reverted “\(edit.from)” → “\(edit.to)”"
+        savedNote = "Reverted “\(edit.from)” → “\(edit.to)” · copied, ⌘V to replace"
     }
 
     /// Apply the editor for the selected span: re-point a built-in swap to the user's
-    /// value, or teach a fix for a plain span. Both re-insert into the current field
-    /// when live re-insertion is on (see `maybeReinsert`).
+    /// value, or teach a fix for a plain span. Both teach for next time and copy the
+    /// corrected text to the clipboard (see `copyCorrection`).
     private func applyEditor(_ range: ClosedRange<Int>) {
         if let edit = singleSwap(in: range) {
             applyChange(edit, to: editValue)
         } else {
-            applyTeach(heard: selectedText(range), correction: editValue, span: unionRange(range))
+            applyTeach(heard: selectedText(range), correction: editValue)
         }
     }
 
@@ -420,27 +465,28 @@ struct ReviewPanel: View {
             rejectedBuiltInSwaps = SuppressionSet.toggling(id, in: rejectedBuiltInSwaps, on: true)
         }
         appendTeach(heard: edit.from, correction: newValue)
-        maybeReinsert(span: edit.range, expecting: edit.to, replacement: trimmed(newValue))
+        copyCorrection(expecting: edit.to, replacement: trimmed(newValue))
         clearSelection()
-        savedNote = "Learned “\(edit.from)” → “\(trimmed(newValue))”"
+        savedNote = "Learned “\(edit.from)” → “\(trimmed(newValue))” · copied, ⌘V to replace"
     }
 
-    private func applyTeach(heard: String, correction: String, span: NSRange) {
+    private func applyTeach(heard: String, correction: String) {
         appendTeach(heard: heard, correction: correction)
-        maybeReinsert(span: span, expecting: heard, replacement: trimmed(correction))
+        copyCorrection(expecting: heard, replacement: trimmed(correction))
         clearSelection()
-        savedNote = "Learned “\(heard)” → “\(trimmed(correction))”"
+        savedNote = "Learned “\(heard)” → “\(trimmed(correction))” · copied, ⌘V to replace"
     }
 
-    /// Experimental: re-insert the corrected full text into the current field, but
-    /// only when the span still lines up with what was inserted (no polish/replacement
-    /// drift) — otherwise it's learn-for-next-time only.
-    private func maybeReinsert(span: NSRange, expecting: String, replacement: String) {
-        guard liveReinsertionEnabled, let onReinsert, !replacement.isEmpty else { return }
-        let ns = record.inserted as NSString
-        guard span.location >= 0, span.location + span.length <= ns.length,
-              ns.substring(with: span) == expecting else { return }
-        onReinsert(ns.replacingCharacters(in: span, with: replacement))
+    /// Copy the running corrected full text to the clipboard so the user can paste it
+    /// over what was typed (⌘V) — universal, unlike an AX in-place replace which only
+    /// landed in some apps. Each fix composes onto the previous via a first-match
+    /// replacement; the clipboard ends holding the latest fully-corrected text.
+    private func copyCorrection(expecting: String, replacement: String) {
+        guard !replacement.isEmpty else { return }
+        let text = CorrectionApply.apply(replacement, for: expecting, to: correctedText ?? record.inserted)
+        correctedText = text
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func appendTeach(heard: String, correction: String) {
@@ -448,16 +494,15 @@ struct ReviewPanel: View {
             let rules = TextReplacements.parse(textReplacements) + [rule]
             textReplacements = TextReplacements.serialize(rules)
         }
+        // Default on: feed the corrected term into the recognition bias prompt so the
+        // decoder stops mishearing it next time, not just rewriting it after the fact.
         if alsoBias {
-            let term = trimmed(correction)
-            if !term.isEmpty {
-                customVocabulary = customVocabulary.isEmpty ? term : customVocabulary + "\n" + term
-            }
+            customVocabulary = CustomVocabulary.appending(correction, to: customVocabulary)
         }
     }
 
     private func clearSelection() {
-        anchor = nil; head = nil; editValue = ""; alsoBias = false
+        anchor = nil; head = nil; editValue = ""; alsoBias = true
     }
 
     private func trimmed(_ s: String) -> String { s.trimmingCharacters(in: .whitespaces) }

@@ -21,7 +21,7 @@ public struct Edit: Codable, Sendable, Equatable {
     /// cases don't break the persisted `CorrectionRecord`. Polish is deliberately
     /// absent — the LLM rewrite is not attributable token-by-token.
     public enum Source: String, Codable, Sendable {
-        case strip, cleanup, mishearing, command, replacement
+        case strip, cleanup, mishearing, command, replacement, contextSub
     }
 
     public var range: NSRange { NSRange(location: location, length: length) }

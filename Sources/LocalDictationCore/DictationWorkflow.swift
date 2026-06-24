@@ -44,7 +44,8 @@ public final class DictationWorkflow: @unchecked Sendable {
     /// queue + the review panel. (`strip`/`cleanup` removals aren't tracked in v1 —
     /// they aren't revertable swaps; see the spec's scope note.)
     public typealias TranscriptEdits = (
-        raw: String, prePolish: String, final: String, segmentA: [Edit], segmentB: [Edit]
+        raw: String, prePolish: String, final: String, segmentA: [Edit], segmentB: [Edit],
+        polish: PolishOutcome?
     )
 
     private let lock = NSLock()
@@ -89,6 +90,7 @@ public final class DictationWorkflow: @unchecked Sendable {
     /// correct term instead of swapping in an unrelated vocabulary word. Returns the
     /// corrected text plus its attributed edits (Segment A).
     private let preCorrect: (@Sendable (String) -> (String, [Edit]))?
+    private let contextSubstitute: (@Sendable (String) async -> (String, [Edit]))?
     private let polisher: TextPolishing?
     /// Deterministic transform applied AFTER polish, just before insertion — e.g.
     /// user text replacements / snippet expansion. Runs after polish so an
@@ -102,6 +104,7 @@ public final class DictationWorkflow: @unchecked Sendable {
         inserter: TextInserting,
         cleanupOptions: TranscriptCleaner.Options? = nil,
         preCorrect: (@Sendable (String) -> (String, [Edit]))? = nil,
+        contextSubstitute: (@Sendable (String) async -> (String, [Edit]))? = nil,
         polisher: TextPolishing? = nil,
         postProcess: (@Sendable (String) -> (String, [Edit]))? = nil
     ) {
@@ -110,6 +113,7 @@ public final class DictationWorkflow: @unchecked Sendable {
         self.inserter = inserter
         self.cleanupOptions = cleanupOptions
         self.preCorrect = preCorrect
+        self.contextSubstitute = contextSubstitute
         self.polisher = polisher
         self.postProcess = postProcess
     }
@@ -187,13 +191,26 @@ public final class DictationWorkflow: @unchecked Sendable {
                 insertText = corrected
                 segmentA = edits
             }
+            // Context substitution (async; may suspend for the confirm overlay).
+            // Folds its edits into Segment A so they share the pre-polish space
+            // and surface as CONTEXT chips in the review panel.
+            if let contextSubstitute {
+                let (corrected, edits) = await contextSubstitute(insertText)
+                insertText = corrected
+                segmentA = EditFold.combine([segmentA, edits])
+            }
             // The deterministic pre-polish result — the space Segment A edits point
             // into, and what the review panel highlights against.
             let prePolish = insertText
-            // Optional LLM polish runs next and is self-guarding: it returns the
-            // input unchanged on any failure, so it can never break insertion.
+            // Optional LLM polish runs next and is self-guarding: its outcome's
+            // `.text` is the input unchanged on any failure, so it can never break
+            // insertion. The outcome (applied/unchanged/guardRejected/unavailable)
+            // is surfaced so the UI can show whether polish actually ran.
+            var polishOutcome: PolishOutcome? = nil
             if let polisher {
-                insertText = await polisher.polish(insertText)
+                let outcome = await polisher.polish(insertText)
+                insertText = outcome.text
+                polishOutcome = outcome
             }
             // The corrected transcript — what was said, with mishearings fixed —
             // is what we surface to the user (history, menu bar, overlay). It is
@@ -217,7 +234,8 @@ public final class DictationWorkflow: @unchecked Sendable {
 
             setLastTranscript(correctedTranscript)
             setLastTranscriptAndEdits(
-                (raw: transcript, prePolish: prePolish, final: insertText, segmentA: segmentA, segmentB: segmentB)
+                (raw: transcript, prePolish: prePolish, final: insertText,
+                 segmentA: segmentA, segmentB: segmentB, polish: polishOutcome)
             )
             setState(.pasting(correctedTranscript))
             try await inserter.insert(insertText)

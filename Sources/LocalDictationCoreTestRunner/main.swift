@@ -61,18 +61,99 @@ struct LocalDictationCoreTestRunner {
         await suite.run("CorrectionLog: changeCount, codable, cap, pending", testCorrectionLog)
         await suite.run("BuiltInCorrections: stable identities match revert convention", testBuiltInCorrections)
         await suite.run("Apply path consults the suppression set", testSuppressionConsult)
-        await suite.run("Reinsertion decision: exact-match replace, else abort", testReinsertionDecision)
         await suite.run("Span selection: grow/shrink/toggle/adjacent/separated", testSpanSelection)
         await suite.run("Insertion formatter handles mid-sentence continuation", testInsertionFormatter)
         await suite.run("Transcript history caps, skips blanks, searches", testTranscriptHistory)
         await suite.run("Keystroke inserter chunks UTF-16 correctly", testKeystrokeChunks)
         await suite.run("Recognition prompt merges default vocabulary", testDefaultVocabularyMerge)
+        await suite.run("Custom vocabulary append dedups (case/space-insensitive)", testCustomVocabularyAppendDedup)
         await suite.run("TranscriptionError userMessage is jargon-free", testTranscriptionErrorUserMessage)
         await suite.run("HelperReaper matches bundle Helpers path only", testHelperReaperPathMatching)
         await suite.run("HelperReaper reaps orphan under Helpers dir, spares others", testHelperReaperReapsOrphanOnly)
         await suite.run("reapTracked kills only recorded live helpers (PID-reuse safe)", testReapTrackedKillsOnlyRecordedLiveHelpers)
+        await suite.run("Edit.Source.contextSub round-trips", testEditSourceContextSubRoundTrips)
+        await suite.run("guard accepts valid swap", testGuardAcceptsValidSwap)
+        await suite.run("guard accepts compound fix", testGuardAcceptsCompoundFix)
+        await suite.run("guard rejects off-list", testGuardRejectsOffList)
+        await suite.run("guard rejects collapse", testGuardRejectsCollapse)
+        await suite.run("guard rejects pure deletion", testGuardRejectsPureDeletion)
+        await suite.run("guard candidate is case-insensitive", testGuardCaseInsensitiveCandidate)
+        await suite.run("diff single swap", testDiffSingleSwap)
+        await suite.run("diff compound swap", testDiffCompoundSwap)
+        await suite.run("diff two swaps", testDiffTwoSwaps)
+        await suite.run("diff no change", testDiffNoChange)
+        await suite.run("diff ignores case-only tokens", testDiffIgnoresCaseOnlyTokens)
+        await suite.run("apply single swap", testApplySingle)
+        await suite.run("apply two swaps offsets", testApplyTwoSwapsOffsets)
+        await suite.run("apply empty", testApplyEmpty)
+        await suite.run("substitution request body shape", testRequestBodyShape)
+        await suite.run("substitution parseContent", testParseContent)
+        await suite.run("contextSubstitute folds into segmentA", testContextSubstituteFoldsIntoSegmentA)
+        await suite.run("guard rejects non-candidate duplication", testGuardRejectsNonCandidateDuplication)
+        await suite.run("guard rejects expansion", testGuardRejectsExpansion)
+        await suite.run("diff handles NBSP whitespace", testDiffUnicodeWhitespace)
+        await suite.run("CustomVocabulary.terms splits on comma + newline", testCustomVocabularyTerms)
+        await suite.run("substitution candidates include custom vocab", testSubstitutionCandidatesCustomVocab)
+        await suite.run("substitution candidates include defaults", testSubstitutionCandidatesDefaults)
+        await suite.run("substitution candidates dedupe case-insensitively", testSubstitutionCandidatesDedupe)
+        await suite.run("substitution candidates include on-screen context", testSubstitutionCandidatesOnScreen)
+        await suite.run("substitution candidates cap at limit, vocab leads", testSubstitutionCandidatesCap)
+        await suite.run("PolishOutcome.text returns the insertable text", testPolishOutcomeText)
+        await suite.run("Polish outcome classification", testPolishOutcomeClassification)
+        await suite.run("Workflow exposes the polish outcome", testWorkflowExposesPolishOutcome)
+        await suite.run("Correction apply composes for the clipboard", testCorrectionApply)
         suite.finish()
     }
+}
+
+private func testCorrectionApply() throws {
+    try expect(CorrectionApply.apply("Vue", for: "view", to: "build the view in view") == "build the Vue in view",
+               "replaces only the first occurrence")
+    let once = CorrectionApply.apply("Vercel", for: "versal", to: "deploy versal then post grass")
+    try expect(CorrectionApply.apply("Postgres", for: "post grass", to: once) == "deploy Vercel then Postgres",
+               "fixes compose onto the running text")
+    try expect(CorrectionApply.apply("X", for: "missing", to: "abc") == "abc", "absent target → unchanged")
+    try expect(CorrectionApply.apply("", for: "abc", to: "abc") == "abc", "empty replacement → unchanged")
+}
+
+private func testCustomVocabularyTerms() throws {
+    let terms = CustomVocabulary.terms("Vercel, Kubernetes\nVue\n\n  Docker  ,")
+    try expect(terms == ["Vercel", "Kubernetes", "Vue", "Docker"],
+               "split on comma + newline, trimmed, empties dropped; got \(terms)")
+    try expect(CustomVocabulary.terms("") == [], "empty list → no terms")
+}
+
+private func testSubstitutionCandidatesCustomVocab() throws {
+    let c = ContextBias.substitutionCandidates(customVocabulary: "Vercel\nVue", defaults: [], context: nil)
+    try expect(c.contains("Vercel") && c.contains("Vue"), "custom vocab terms must be candidates; got \(c)")
+}
+
+private func testSubstitutionCandidatesDefaults() throws {
+    let c = ContextBias.substitutionCandidates(customVocabulary: "", defaults: ["Kubernetes", "Postgres"], context: nil)
+    try expect(c.contains("Kubernetes") && c.contains("Postgres"), "built-in defaults must be candidates; got \(c)")
+}
+
+private func testSubstitutionCandidatesDedupe() throws {
+    let c = ContextBias.substitutionCandidates(customVocabulary: "vercel", defaults: ["Vercel"], context: nil)
+    try expect(c.filter { $0.lowercased() == "vercel" }.count == 1, "case-insensitive dedupe; got \(c)")
+}
+
+private func testSubstitutionCandidatesOnScreen() throws {
+    let ctx = ContextBias.PromptContext(
+        appVocabulary: ContextBias.vocabulary(for: .terminal),
+        candidates: ["UserStore.swift", "feat/login"]
+    )
+    let c = ContextBias.substitutionCandidates(customVocabulary: "", defaults: [], context: ctx)
+    try expect(c.contains("UserStore.swift") && c.contains("feat/login"), "on-screen candidates included; got \(c)")
+    try expect(c.contains("git"), "app-class vocabulary included; got \(c)")
+}
+
+private func testSubstitutionCandidatesCap() throws {
+    let ctx = ContextBias.PromptContext(candidates: (0..<50).map { "tok\($0)" })
+    let c = ContextBias.substitutionCandidates(customVocabulary: "Vercel", defaults: ["Kubernetes"], context: ctx, limit: 5)
+    try expect(c.count == 5, "capped at limit; got \(c.count)")
+    try expect(c.first == "Vercel", "custom vocab leads so the cap preserves it; got \(c)")
+    try expect(c.contains("Kubernetes"), "defaults precede on-screen tokens under the cap; got \(c)")
 }
 
 private func testHelperReaperPathMatching() throws {
@@ -111,9 +192,14 @@ private func testHelperReaperReapsOrphanOnly() throws {
     try control.run()
     defer { control.terminate() }
 
-    usleep(250_000)  // let both appear in the process table
-
-    let orphans = HelperProcessReaper.orphanPIDs(helpersDir: helpers)
+    // Poll until the orphan appears in proc_listpids (up to 2 s) to avoid a
+    // race where the kernel hasn't yet added the freshly exec'd process.
+    var orphans: [pid_t] = []
+    for _ in 0..<8 {
+        orphans = HelperProcessReaper.orphanPIDs(helpersDir: helpers)
+        if orphans.contains(orphan.processIdentifier) { break }
+        usleep(250_000)
+    }
     try expect(orphans.contains(orphan.processIdentifier), "orphan helper should be detected")
     try expect(!orphans.contains(control.processIdentifier), "control /bin/sleep must not be detected")
 
@@ -593,6 +679,16 @@ private func testWhisperArgsVADTuning() throws {
     )
 }
 
+private func testCustomVocabularyAppendDedup() throws {
+    try expect(CustomVocabulary.appending("Vercel", to: "") == "Vercel", "append to empty list")
+    try expect(CustomVocabulary.appending("Supabase", to: "Vercel") == "Vercel\nSupabase", "new term appended newline-joined")
+    try expect(CustomVocabulary.appending("Vercel", to: "Vercel") == "Vercel", "exact duplicate skipped")
+    try expect(CustomVocabulary.appending("  vercel ", to: "Vercel\nSupabase") == "Vercel\nSupabase", "case/space-insensitive duplicate skipped")
+    try expect(CustomVocabulary.appending("Vercel", to: "Vercel\r\nSupabase") == "Vercel\r\nSupabase", "CRLF list: existing term still deduped")
+    try expect(CustomVocabulary.appending("   ", to: "Vercel") == "Vercel", "empty/whitespace term is a no-op")
+    try expect(CustomVocabulary.appending("  Kubernetes ", to: "") == "Kubernetes", "term trimmed on insert")
+}
+
 private func testAudioPeakNormalization() throws {
     func peak(_ s: [Float]) -> Float { s.map(abs).max() ?? 0 }
     let approx: (Float, Float) -> Bool = { abs($0 - $1) < 1e-4 }
@@ -826,7 +922,7 @@ private func testWorkflowSurfacesCorrectedTranscript() async throws {
     // app surfaces via lastTranscript (history, menu bar, overlay). This was the
     // bug: "clot" showed everywhere even though "Claude" was what got typed.
     let inserter = StubInserter()
-    let polisher = FakePolisher { $0.replacingOccurrences(of: "clot", with: "Claude") }
+    let polisher = FakePolisher { .applied($0.replacingOccurrences(of: "clot", with: "Claude")) }
     let workflow = DictationWorkflow(
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "I am coding with clot"),
@@ -851,7 +947,7 @@ private func testWorkflowPreCorrectRunsBeforePolish() async throws {
     // Deterministic mishearing fix must run before the polisher, so the polisher
     // receives the corrected term — not the raw mishearing it would mangle.
     let inserter = StubInserter()
-    let polisher = FakePolisher { $0 }  // identity: passes its input straight through
+    let polisher = FakePolisher { .unchanged($0) }  // identity: passes its input straight through
     let workflow = DictationWorkflow(
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "ship it with clot today"),
@@ -1009,6 +1105,32 @@ private func testCommandModeCorrections() throws {
     try expect(
         CommandModeCorrections.apply(to: "Git push origin me.", appClass: .terminal, precedingText: nil) == "git push origin main",
         "command formatting: lowercase Git + strip trailing period"
+    )
+
+    // git-homophone recovery: whisper mis-hears the command head "git" as "get"/"guit"
+    // (observed in the A/B harness: "git checkout main" -> "get checkout main"). When
+    // it heads an UNAMBIGUOUS git subcommand we recover it to "git".
+    try expect(
+        CommandModeCorrections.apply(to: "get checkout main", appClass: .terminal, precedingText: nil) == "git checkout main",
+        "misheard 'get checkout' -> 'git checkout'"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "guit rebase mane", appClass: .editor, precedingText: nil) == "git rebase main",
+        "misheard 'guit rebase' + 'mane' -> 'git rebase main' (length-changing head fix)"
+    )
+    try expect(
+        CommandModeCorrections.isCommandContext(appClass: .terminal, line: "get checkout main"),
+        "'get checkout' is command context (misheard git)"
+    )
+    // But a misheard-git homophone before a PROSE-ambiguous word is left alone — we
+    // never rewrite "get push notifications" into a git command.
+    try expect(
+        !CommandModeCorrections.isCommandContext(appClass: .terminal, line: "get push notifications working"),
+        "'get push' prose is not command context"
+    )
+    try expect(
+        CommandModeCorrections.apply(to: "get push notifications working", appClass: .terminal, precedingText: nil) == "get push notifications working",
+        "'get push ...' prose is untouched"
     )
 
     // LEFT ALONE in prose context — the whole point of context-scoping.
@@ -1277,6 +1399,14 @@ private func testCommandModeEditTracking() throws {
     // Gated: terminal app but no git command in the line → untouched, no edits.
     let (o3, e3) = CommandModeCorrections.applyTracked(to: "remind me", appClass: terminal, precedingText: "please")
     try expect(o3 == "remind me" && e3.isEmpty, "no git command -> untouched, no edits")
+
+    // git-homophone head fix is tracked; the length-changing "guit"->"git" (-1) must
+    // rebase the later "mane"->"main" edit so its range still maps to the output.
+    let (o4, e4) = CommandModeCorrections.applyTracked(to: "guit checkout mane", appClass: terminal, precedingText: nil)
+    try expect(o4 == "git checkout main", "guit->git + mane->main: \(o4)")
+    try expect(e4.contains { $0.from.lowercased() == "guit" && $0.to == "git" && $0.source == .command }, "guit->git edit present")
+    let mainEdit = e4.first { $0.to == "main" }
+    try expect(mainEdit != nil && (o4 as NSString).substring(with: mainEdit!.range) == "main", "main edit range maps to output after head shift")
 }
 
 private func testEditFoldCombine() throws {
@@ -1398,13 +1528,6 @@ private func testSuppressionConsult() throws {
     )
 }
 
-private func testReinsertionDecision() throws {
-    try expect(ReinsertionDecision.canReplace(inserted: "push to main", readBack: "push to main"), "exact match -> replace")
-    try expect(!ReinsertionDecision.canReplace(inserted: "push to main", readBack: "push to maine"), "drifted text -> abort")
-    try expect(!ReinsertionDecision.canReplace(inserted: "main", readBack: "main "), "trailing-space mismatch -> abort")
-    try expect(!ReinsertionDecision.canReplace(inserted: "x", readBack: nil), "no read-back -> abort")
-    try expect(!ReinsertionDecision.canReplace(inserted: "", readBack: ""), "empty inserted -> abort")
-}
 
 private func testInsertionFormatter() throws {
     try expect(
@@ -1620,15 +1743,182 @@ private final class StubInserter: TextInserting, @unchecked Sendable {
 }
 
 private final class FakePolisher: TextPolishing, @unchecked Sendable {
-    private let transform: @Sendable (String) -> String
+    private let transform: @Sendable (String) -> PolishOutcome
     private(set) var receivedInput: String?
 
-    init(_ transform: @escaping @Sendable (String) -> String) {
+    init(_ transform: @escaping @Sendable (String) -> PolishOutcome) {
         self.transform = transform
     }
 
-    func polish(_ text: String) async -> String {
+    func polish(_ text: String) async -> PolishOutcome {
         receivedInput = text
         return transform(text)
     }
+}
+
+private func testPolishOutcomeText() throws {
+    try expect(PolishOutcome.applied("Hi.").text == "Hi.", "applied carries the polished text")
+    try expect(PolishOutcome.unchanged("hi").text == "hi", "unchanged carries the input")
+    try expect(PolishOutcome.guardRejected("raw").text == "raw", "guardRejected keeps the original")
+    try expect(PolishOutcome.unavailable("raw").text == "raw", "unavailable keeps the original")
+}
+
+private func testPolishOutcomeClassification() throws {
+    try expect(TranscriptPolisher.outcome(forContent: nil, original: "the report") == .unavailable("the report"),
+               "nil content → unavailable")
+    try expect(TranscriptPolisher.outcome(forContent: "", original: "the report") == .unavailable("the report"),
+               "empty content → unavailable")
+    try expect(TranscriptPolisher.outcome(forContent: "the quarterly status report is late now", original: "the report") == .guardRejected("the report"),
+               "added content words → guardRejected, original kept")
+    try expect(TranscriptPolisher.outcome(forContent: "the report", original: "the report") == .unchanged("the report"),
+               "byte-identical faithful reply → unchanged")
+    try expect(TranscriptPolisher.outcome(forContent: "The report.", original: "the report") == .applied("The report."),
+               "faithful reformat (caps/punct) → applied(polished)")
+}
+
+private func testWorkflowExposesPolishOutcome() async throws {
+    let inserter = StubInserter()
+    let polisher = FakePolisher { _ in .applied("The report.") }
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "the report"),
+        inserter: inserter,
+        polisher: polisher
+    )
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(workflow.lastTranscriptAndEdits?.polish == .applied("The report."),
+               "workflow threads the polish outcome onto its result")
+    try expect(inserter.insertedText == "The report.", "inserts outcome.text, got \(inserter.insertedText ?? "nil")")
+}
+
+private func testEditSourceContextSubRoundTrips() throws {
+    let edit = Edit(location: 3, length: 6, from: "versal", to: "Vercel", source: .contextSub)
+    let data = try JSONEncoder().encode(edit)
+    let decoded = try JSONDecoder().decode(Edit.self, from: data)
+    try expect(decoded.source == .contextSub, "contextSub source must round-trip through Codable")
+}
+
+private func testGuardAcceptsValidSwap() throws {
+    let out = ContextSubstitution.guardOutput("deploy it to Vercel", original: "deploy it to versal", candidates: ["Vercel"])
+    try expect(out == "deploy it to Vercel", "valid single candidate swap must pass")
+}
+private func testGuardAcceptsCompoundFix() throws {
+    let out = ContextSubstitution.guardOutput("write it in TypeScript", original: "write it in type script", candidates: ["TypeScript"])
+    try expect(out == "write it in TypeScript", "type script -> TypeScript (2->1) must pass")
+}
+private func testGuardRejectsOffList() throws {
+    let out = ContextSubstitution.guardOutput("let's use Docker", original: "let's use cuban eats", candidates: ["Kubernetes"])
+    try expect(out == "let's use cuban eats", "swapping in a non-candidate must reject to original")
+}
+private func testGuardRejectsCollapse() throws {
+    let out = ContextSubstitution.guardOutput("Vercel", original: "deploy it to versal", candidates: ["Vercel"])
+    try expect(out == "deploy it to versal", "dropping >1 word (collapse) must reject")
+}
+private func testGuardRejectsPureDeletion() throws {
+    let out = ContextSubstitution.guardOutput("deploy it to", original: "deploy it to versal", candidates: ["Vercel"])
+    try expect(out == "deploy it to versal", "dropping content with nothing added must reject")
+}
+private func testGuardCaseInsensitiveCandidate() throws {
+    let out = ContextSubstitution.guardOutput("ping me on Slack", original: "ping me on slock", candidates: ["slack"])
+    try expect(out == "ping me on Slack", "candidate match is case-insensitive")
+}
+private func testGuardRejectsNonCandidateDuplication() throws {
+    // A repeated non-candidate word must be caught by the multiset guard (a plain
+    // set would see "push" already present and miss the duplication).
+    let out = ContextSubstitution.guardOutput("push push it", original: "push it", candidates: ["it"])
+    try expect(out == "push it", "duplicated non-candidate word must reject")
+}
+private func testGuardRejectsExpansion() throws {
+    // Adding more than one word — even candidate words — is unbounded expansion.
+    let out = ContextSubstitution.guardOutput("type it right now", original: "type it", candidates: ["right", "now"])
+    try expect(out == "type it", "expanding output by >1 word must reject")
+}
+
+private func testDiffSingleSwap() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "deploy it to Vercel")
+    try expect(swaps.count == 1, "one swap expected")
+    try expect(swaps[0].from == "versal" && swaps[0].to == "Vercel", "from/to text")
+    let ns = "deploy it to versal" as NSString
+    try expect(ns.substring(with: swaps[0].range) == "versal", "range must address the original word")
+}
+private func testDiffCompoundSwap() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "write it in type script", guarded: "write it in TypeScript")
+    try expect(swaps.count == 1, "compound is one swap")
+    try expect(swaps[0].from == "type script" && swaps[0].to == "TypeScript", "2->1 compound from/to")
+}
+private func testDiffTwoSwaps() throws {
+    let swaps = ContextSubstitution.diffSwaps(
+        original: "deploy it to versal then spin up cuban eats",
+        guarded:  "deploy it to Vercel then spin up Kubernetes")
+    try expect(swaps.count == 2, "two independent swaps must stay separate")
+    try expect(swaps[0].to == "Vercel" && swaps[1].to == "Kubernetes", "ordered targets")
+}
+private func testDiffNoChange() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "the dock was full of boats", guarded: "the dock was full of boats")
+    try expect(swaps.isEmpty, "identical text yields no swaps")
+}
+private func testDiffIgnoresCaseOnlyTokens() throws {
+    let swaps = ContextSubstitution.diffSwaps(original: "deploy it to versal", guarded: "Deploy it to Vercel")
+    try expect(swaps.count == 1 && swaps[0].to == "Vercel", "case-only differences are not swaps")
+}
+private func testDiffUnicodeWhitespace() throws {
+    // A non-breaking space in the guarded output must still tokenize as a word
+    // boundary, so the swap is found cleanly instead of merging two words.
+    let swaps = ContextSubstitution.diffSwaps(original: "deploy to versal", guarded: "deploy to\u{00A0}Vercel")
+    try expect(swaps.count == 1, "NBSP must not merge tokens")
+    try expect(swaps[0].from == "versal" && swaps[0].to == "Vercel", "clean swap across NBSP")
+}
+
+private func testApplySingle() throws {
+    let original = "deploy it to versal"
+    let swaps = ContextSubstitution.diffSwaps(original: original, guarded: "deploy it to Vercel")
+    let (out, edits) = ContextSubstitution.apply(swaps, to: original)
+    try expect(out == "deploy it to Vercel", "applied text")
+    try expect(edits.count == 1 && edits[0].source == .contextSub, "one contextSub edit")
+    let ns = out as NSString
+    try expect(ns.substring(with: edits[0].range) == "Vercel", "edit range addresses 'to' in OUTPUT space")
+}
+private func testApplyTwoSwapsOffsets() throws {
+    let original = "deploy it to versal then spin up cuban eats"
+    let swaps = ContextSubstitution.diffSwaps(original: original, guarded: "deploy it to Vercel then spin up Kubernetes")
+    let (out, edits) = ContextSubstitution.apply(swaps, to: original)
+    try expect(out == "deploy it to Vercel then spin up Kubernetes", "both applied")
+    let ns = out as NSString
+    try expect(ns.substring(with: edits[0].range) == "Vercel", "first edit range valid post-shift")
+    try expect(ns.substring(with: edits[1].range) == "Kubernetes", "second edit range valid post-shift")
+}
+private func testApplyEmpty() throws {
+    let (out, edits) = ContextSubstitution.apply([], to: "unchanged")
+    try expect(out == "unchanged" && edits.isEmpty, "no swaps -> no change")
+}
+
+private func testRequestBodyShape() throws {
+    let data = ContextSubstitution.chatRequestBody(transcript: "deploy it to versal", candidates: ["Vercel", "Netlify"])
+    let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    try expect((json["temperature"] as? Double) == 0, "temperature must be 0")
+    let kwargs = json["chat_template_kwargs"] as? [String: Any]
+    try expect((kwargs?["enable_thinking"] as? Bool) == false, "thinking disabled")
+    let messages = json["messages"] as! [[String: String]]
+    try expect(messages.first?["role"] == "system", "first message is system")
+    try expect(messages.first!["content"]!.contains("Vercel, Netlify"), "system prompt lists candidates")
+    try expect(messages.last?["role"] == "user", "last message is user")
+    try expect(messages.last!["content"]!.contains("deploy it to versal"), "user carries the transcript")
+}
+private func testParseContent() throws {
+    let payload = #"{"choices":[{"message":{"content":"deploy it to Vercel"}}]}"#.data(using: .utf8)!
+    try expect(ContextSubstitution.parseContent(payload) == "deploy it to Vercel", "parses choices[0].message.content")
+}
+
+private func testContextSubstituteFoldsIntoSegmentA() async throws {
+    // A stub stage that swaps "versal" -> "Vercel" and reports the edit.
+    let stage: @Sendable (String) async -> (String, [Edit]) = { text in
+        ContextSubstitution.apply(
+            ContextSubstitution.diffSwaps(original: text, guarded: text.replacingOccurrences(of: "versal", with: "Vercel")),
+            to: text)
+    }
+    let (out, edits) = await stage("deploy it to versal")
+    try expect(out == "deploy it to Vercel", "stage applies the swap")
+    let folded = EditFold.combine([[], edits])
+    try expect(folded.count == 1 && folded[0].source == .contextSub, "edits fold into segmentA space")
 }

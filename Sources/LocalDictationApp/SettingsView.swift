@@ -24,7 +24,8 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.textReplacements) private var textReplacements = AppSettingsSnapshot.Defaults.textReplacements
     @AppStorage(AppSettingsKeys.logCorrections) private var logCorrections = AppSettingsSnapshot.Defaults.logCorrections
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
-    @AppStorage(AppSettingsKeys.liveReinsertionEnabled) private var liveReinsertionEnabled = AppSettingsSnapshot.Defaults.liveReinsertionEnabled
+    @AppStorage(AppSettingsKeys.contextSubstitutionEnabled) private var contextSubstitutionEnabled = AppSettingsSnapshot.Defaults.contextSubstitutionEnabled
+    @AppStorage(AppSettingsKeys.contextSubstitutionCountdown) private var contextSubstitutionCountdown = AppSettingsSnapshot.Defaults.contextSubstitutionCountdown
 
     @State private var readiness = ReadinessModel()
     @State private var store = ModelStore()
@@ -42,6 +43,8 @@ struct SettingsView: View {
                 polishStore: polishStore,
                 language: $language,
                 saveHistory: $saveHistory,
+                contextSubstitutionEnabled: $contextSubstitutionEnabled,
+                contextSubstitutionCountdown: $contextSubstitutionCountdown,
                 refresh: refresh
             )
             .tabItem { Label("General", systemImage: "gearshape") }
@@ -74,8 +77,7 @@ struct SettingsView: View {
             LearnTab(
                 logCorrections: $logCorrections,
                 textReplacements: $textReplacements,
-                rejectedBuiltInSwaps: $rejectedBuiltInSwaps,
-                liveReinsertionEnabled: $liveReinsertionEnabled
+                rejectedBuiltInSwaps: $rejectedBuiltInSwaps
             )
             .tabItem { Label("Learn", systemImage: "brain") }
             .tag(SettingsTab.learn)

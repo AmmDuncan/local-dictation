@@ -6,6 +6,7 @@ import SwiftUI
 enum DictationPhase: Equatable {
     case listening
     case transcribing
+    case reviewSubstitution
     case done
     case error
     case cancelled
@@ -22,8 +23,33 @@ final class OverlayState {
     /// Ranges (UTF-16, in `detail`) of words the system swapped, for the "Typed"
     /// card to flat-underline. Empty unless the `.done` card has reviewable swaps.
     var swappedRanges: [NSRange] = []
+    /// One-time first-run "Polished on-device" proof on the `.done` card. True only
+    /// for the first few applied polishes after polish is enabled / the model swaps,
+    /// then permanently false — steady-state success stays silent.
+    var polishStreak: Bool = false
+
+    /// Proposed swaps for the .reviewSubstitution phase, with per-swap accepted flag.
+    var pendingSwaps: [PendingSwap] = []
+    var countdownTotal: TimeInterval = 5
+    var countdownRemaining: TimeInterval = 5
+    /// The held transcript shown in the review card (swaps rendered inline).
+    var reviewText: String = ""
+    /// True while the auto-apply countdown runs; flips false the moment the user
+    /// toggles a swap (manual mode — resolve via Apply / Keep).
+    var countdownActive: Bool = true
+
+    struct PendingSwap: Identifiable, Equatable {
+        let id: Int            // 1-based index, shown as the row number
+        let range: NSRange     // UTF-16 span in `reviewText`, for inline underlining
+        let from: String
+        let to: String
+        var accepted: Bool = true
+    }
 
     @ObservationIgnored var action: (() -> Void)?
+    @ObservationIgnored var reviewToggle: ((Int) -> Void)?
+    @ObservationIgnored var reviewApply: (() -> Void)?
+    @ObservationIgnored var reviewKeep: (() -> Void)?
 }
 
 @MainActor
@@ -50,6 +76,7 @@ final class OverlayController {
         switch phase {
         case .listening: 226  // taller for the 3-line tailing transcript + draft eyebrow
         case .transcribing: 130
+        case .reviewSubstitution: min(400, 234 + CGFloat(max(1, state.pendingSwaps.count)) * 26)
         case .done: 220
         case .error: 194
         case .cancelled: 120
@@ -71,9 +98,10 @@ final class OverlayController {
         present(phase: .transcribing, title: "Transcribing", detail: "Private, on your Mac")
     }
 
-    func showDone(text: String, swappedRanges: [NSRange] = []) {
+    func showDone(text: String, swappedRanges: [NSRange] = [], polishStreak: Bool = false) {
         stopLevelUpdates()
         state.swappedRanges = swappedRanges
+        state.polishStreak = polishStreak
         present(phase: .done, title: "Typed", detail: text)
     }
 
@@ -88,6 +116,60 @@ final class OverlayController {
         stopLevelUpdates()
         present(phase: .cancelled, title: "Cancelled", detail: "Nothing was typed")
     }
+
+    func showReviewSubstitution(text: String, swaps: [OverlayState.PendingSwap], countdown: TimeInterval) {
+        stopLevelUpdates()
+        state.reviewText = text
+        state.pendingSwaps = swaps
+        state.countdownTotal = countdown
+        state.countdownRemaining = countdown
+        state.countdownActive = true
+        present(phase: .reviewSubstitution, title: "Review swaps", detail: "")
+    }
+
+    /// Mutate the live overlay state for the .reviewSubstitution phase. The
+    /// confirmer ticks the countdown and toggles swaps through these.
+    func updateCountdownRemaining(_ remaining: TimeInterval) {
+        guard state.phase == .reviewSubstitution else { return }
+        state.countdownRemaining = remaining
+    }
+
+    /// Wire the review overlay's mouse interactions back to the confirmer.
+    func setReviewActions(toggle: @escaping (Int) -> Void,
+                          apply: @escaping () -> Void,
+                          keep: @escaping () -> Void) {
+        guard state.phase == .reviewSubstitution else { return }
+        state.reviewToggle = toggle
+        state.reviewApply = apply
+        state.reviewKeep = keep
+    }
+
+    /// The user engaged a toggle — stop the auto-apply countdown (manual mode).
+    func markCountdownInactive() {
+        guard state.phase == .reviewSubstitution else { return }
+        state.countdownActive = false
+    }
+
+    func togglePendingSwap(id: Int) {
+        guard state.phase == .reviewSubstitution,
+              let idx = state.pendingSwaps.firstIndex(where: { $0.id == id }) else { return }
+        state.pendingSwaps[idx].accepted.toggle()
+    }
+
+    /// The swaps still toggled on, in id order.
+    var acceptedPendingSwaps: [OverlayState.PendingSwap] {
+        state.pendingSwaps.filter(\.accepted)
+    }
+
+    #if DEBUG
+    // Headless smoke hooks: invoke the EXACT closures the overlay's tap gestures
+    // and buttons call, so the confirmer state machine can be driven without a
+    // mouse (computer-use can't target this app). See runReviewSubstitutionLive.
+    var debugCountdownActive: Bool { state.countdownActive }
+    func simulateReviewToggle(id: Int) { state.reviewToggle?(id) }
+    func simulateReviewApply() { state.reviewApply?() }
+    func simulateReviewKeep() { state.reviewKeep?() }
+    #endif
 
     /// Update the rolling partial transcript without changing phase.
     func updateListeningDetail(_ detail: String) {
@@ -113,7 +195,15 @@ final class OverlayController {
             state.actionTitle = nil
             state.action = nil
         }
-        if phase != .done { state.swappedRanges = [] }
+        if phase != .done { state.swappedRanges = []; state.polishStreak = false }
+        if phase != .reviewSubstitution {
+            state.pendingSwaps = []
+            state.reviewText = ""
+            state.reviewToggle = nil
+            state.reviewApply = nil
+            state.reviewKeep = nil
+            state.countdownActive = true
+        }
         state.phase = phase
         state.title = title
         state.detail = detail
@@ -121,7 +211,10 @@ final class OverlayController {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setContentSize(NSSize(width: panelWidth, height: panelHeight(for: phase)))
-        panel.ignoresMouseEvents = phase != .error
+        panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution
+        // While reviewing swaps the user clicks chips/words to toggle them — don't
+        // let a click drag the window (movable-by-background reads clicks as drags).
+        panel.isMovableByWindowBackground = phase != .reviewSubstitution
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }

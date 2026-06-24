@@ -10,6 +10,8 @@ struct GeneralTab: View {
     var polishStore: PolishModelStore
     @Binding var language: String
     @Binding var saveHistory: Bool
+    @Binding var contextSubstitutionEnabled: Bool
+    @Binding var contextSubstitutionCountdown: Double
     var refresh: () -> Void
 
     var body: some View {
@@ -61,6 +63,20 @@ struct GeneralTab: View {
                 Section("History") {
                     Toggle("Save dictation history", isOn: $saveHistory)
                         .help("Keep a searchable, text-only history of your dictations (no audio). Open it from the menu-bar icon.")
+                }
+
+                Section("Experimental") {
+                    Toggle(isOn: $contextSubstitutionEnabled) {
+                        ExperimentalLabel("Context substitution")
+                    }
+                    .help("Fix misheard tech terms using what's on your screen. Each swap is held in the overlay with a countdown — you confirm or undo before it's typed. Uses your selected AI model (Models tab). On-device.")
+                    if contextSubstitutionEnabled {
+                        HStack {
+                            Text("Countdown")
+                            Slider(value: $contextSubstitutionCountdown, in: 2...10, step: 0.5)
+                            Text("\(contextSubstitutionCountdown, specifier: "%.1f")s").monospacedDigit()
+                        }
+                    }
                 }
             }
             .formStyle(.grouped)

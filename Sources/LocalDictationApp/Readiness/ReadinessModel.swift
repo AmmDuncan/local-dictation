@@ -44,8 +44,42 @@ final class ReadinessModel {
             whisperItem(settings),
             modelItem(settings),
             microphoneItem(),
-            accessibilityItem(settings)
+            accessibilityItem(settings),
+            polishItem(settings)
         ]
+    }
+
+    /// Pull-only standing health for the optional LLM polish, plus the lifetime
+    /// tally that answers "is it actually doing anything?" without any per-dictation
+    /// signal. `.ok` when off or ready (so it never nags the menu-bar problem strip);
+    /// `.warn` only when polish is ON but the model file is missing — the dangerous
+    /// "enabled but every dictation is silently raw" case the user must be able to see.
+    private func polishItem(_ settings: AppSettingsSnapshot) -> ReadinessItem {
+        guard settings.polishWithAI else {
+            return ReadinessItem(id: "polish", label: "Polish · off", state: .ok,
+                                 detail: "Enable in Settings to clean up formatting")
+        }
+        let path = settings.polishModelPath.expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path) else {
+            return ReadinessItem(id: "polish", label: "Polish · unavailable", state: .warn,
+                                 detail: "Model not loaded — dictation still works, just unpolished")
+        }
+        // The lifetime tally lives in the LABEL: HealthStripView renders the pill
+        // label for .ok items (detail shows only for problems), and a counter that
+        // has visibly moved is the durable, pull-only proof that polish runs.
+        let d = UserDefaults.standard
+        let applied = d.integer(forKey: AppSettingsKeys.polishAppliedCount)
+        let heldBack = d.integer(forKey: AppSettingsKeys.polishHeldBackCount)
+        let label: String
+        if applied > 0 {
+            label = "Polish · \(PolishProof.grouped(applied)) polished"
+                + (heldBack > 0 ? " · \(PolishProof.grouped(heldBack)) held back" : "")
+        } else if heldBack > 0 {
+            label = "Polish · \(PolishProof.grouped(heldBack)) held back"
+        } else {
+            label = "Polish · ready"
+        }
+        return ReadinessItem(id: "polish", label: label, state: .ok, detail: nil)
     }
 
     private func whisperItem(_ settings: AppSettingsSnapshot) -> ReadinessItem {

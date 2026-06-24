@@ -126,6 +126,7 @@ struct OverlayView: View {
         switch state.phase {
         case .error: "exclamationmark.triangle.fill"
         case .cancelled: "xmark"
+        case .reviewSubstitution: "sparkles"
         default: "waveform"
         }
     }
@@ -134,6 +135,7 @@ struct OverlayView: View {
         switch state.phase {
         case .listening: "Speak now — I'm hearing you"
         case .transcribing: "Processing your words locally"
+        case .reviewSubstitution: "Confirm before it's typed"
         case .done: "Typed at your cursor"
         case .error: "Can't continue yet"
         case .cancelled: "Discarded — nothing typed"
@@ -147,6 +149,7 @@ struct OverlayView: View {
         switch phase {
         case .listening: listeningBody
         case .transcribing: transcribingBody
+        case .reviewSubstitution: reviewSubstitutionBody
         case .done: doneBody
         case .error: errorBody
         case .cancelled: cancelledBody
@@ -206,6 +209,136 @@ struct OverlayView: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: review substitution
+
+    private var acceptedCount: Int { state.pendingSwaps.filter(\.accepted).count }
+
+    private var reviewSubstitutionBody: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(reviewQuote)
+                .font(.system(size: 14.5))
+                .foregroundStyle(ink)
+                .environment(\.openURL, OpenURLAction { url in
+                    if url.scheme == "ldswap", let id = Int(url.host ?? "") {
+                        state.reviewToggle?(id)
+                        return .handled
+                    }
+                    return .discarded
+                })
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 14).fill(ink.opacity(0.05)))
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(state.pendingSwaps) { swap in
+                    swapLegendRow(swap)
+                }
+            }
+
+            HStack(spacing: 12) {
+                if state.countdownActive {
+                    CountdownRing(
+                        progress: state.countdownTotal > 0 ? state.countdownRemaining / state.countdownTotal : 0,
+                        seconds: state.countdownRemaining
+                    )
+                    .frame(width: 34, height: 34)
+                    Text("Applying all in \(Int(ceil(state.countdownRemaining)))s")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(inkDim)
+                } else {
+                    Text(acceptedCount == 0 ? "All kept as-is" : "\(acceptedCount) of \(state.pendingSwaps.count) on")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(inkDim)
+                }
+
+                Spacer(minLength: 8)
+
+                Button { state.reviewKeep?() } label: {
+                    Text("Keep original")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(inkDim)
+                }
+                .buttonStyle(.plain)
+
+                Button(acceptedCount == 0 ? "Apply" : "Apply \(acceptedCount)") { state.reviewApply?() }
+                    .buttonStyle(SignalButtonStyle())
+                    .disabled(acceptedCount == 0)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The held transcript with each swap rendered INLINE in its sentence: the
+    /// emerald-underlined target while accepted, the original word dimmed while
+    /// toggled off — so the user judges the swap in context, not in isolation.
+    private var reviewQuote: AttributedString {
+        let ns = state.reviewText as NSString
+        guard ns.length > 0 else {
+            return AttributedString(state.pendingSwaps.map { $0.accepted ? $0.to : $0.from }.joined(separator: " "))
+        }
+        let swaps = state.pendingSwaps.sorted { $0.range.location < $1.range.location }
+        var result = AttributedString("“")
+        var cursor = 0
+        for swap in swaps {
+            let loc = swap.range.location
+            guard loc >= cursor, loc + swap.range.length <= ns.length else { continue }
+            if loc > cursor {
+                result += AttributedString(ns.substring(with: NSRange(location: cursor, length: loc - cursor)))
+            }
+            var chunk = AttributedString(swap.accepted ? swap.to : ns.substring(with: swap.range))
+            if swap.accepted {
+                chunk.underlineStyle = .single
+                chunk.foregroundColor = Brand.emerald
+            } else {
+                chunk.foregroundColor = inkDim
+            }
+            chunk.link = URL(string: "ldswap://\(swap.id)")   // tap the word in the sentence to toggle the swap
+            result += chunk
+            cursor = loc + swap.range.length
+        }
+        if cursor < ns.length {
+            result += AttributedString(ns.substring(from: cursor))
+        }
+        result += AttributedString("”")
+        return result
+    }
+
+    @ViewBuilder
+    private func swapLegendRow(_ swap: OverlayState.PendingSwap) -> some View {
+        HStack(spacing: 9) {
+            Text("\(swap.id)")
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(ink)
+                .frame(width: 18, height: 18)
+                .background(RoundedRectangle(cornerRadius: 5).fill(ink.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(ink.opacity(0.12)))
+
+            Image(systemName: swap.accepted ? "checkmark" : "arrow.uturn.backward")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(swap.accepted ? Brand.emerald : inkDim)
+                .frame(width: 14)
+
+            HStack(spacing: 5) {
+                Text(swap.from)
+                    .foregroundStyle(inkDim)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(inkDim)
+                Text(swap.to)
+                    .foregroundStyle(swap.accepted ? Brand.emerald : inkDim)
+            }
+            .font(.system(size: 12.5))
+            .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { state.reviewToggle?(swap.id) }
+    }
+
     private var doneBody: some View {
         VStack(spacing: 14) {
             Image(systemName: "checkmark")
@@ -226,9 +359,18 @@ struct OverlayView: View {
                     .frame(maxWidth: .infinity)
                     .background(RoundedRectangle(cornerRadius: 14).fill(ink.opacity(0.05)))
                 if !state.swappedRanges.isEmpty {
-                    Text("⌥Z to review")
+                    Text("⌃⌥Z to review")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(inkDim)
+                }
+                // First-run proof only: rebuilds belief that polish runs, then
+                // permanently quiets (steady-state success shows nothing here).
+                if state.polishStreak {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles").font(.system(size: 10))
+                        Text("Polished on-device").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(inkDim)
                 }
             }
         }
@@ -331,6 +473,30 @@ private struct TailingTranscript: View {
             )
             .animation(.easeOut(duration: 0.16), value: text)  // glide, don't snap
             .accessibilityLabel(isEmpty ? "Listening" : text)
+    }
+}
+
+// MARK: - Countdown ring
+
+/// A circular countdown indicator: an emerald arc that drains clockwise as the
+/// confirm window elapses, with the remaining whole seconds in the center.
+private struct CountdownRing: View {
+    var progress: Double   // 1 -> full, 0 -> empty
+    var seconds: TimeInterval
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Brand.emerald.opacity(0.18), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: max(0, min(1, progress)))
+                .stroke(Brand.emerald, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.1), value: progress)
+            Text("\(Int(ceil(max(0, seconds))))")
+                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Brand.emerald)
+        }
     }
 }
 

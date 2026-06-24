@@ -126,6 +126,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if let path = ProcessInfo.processInfo.environment["LD_REVIEW_SUB_SHOT"] {
+            renderReviewSubstitutionShot(to: path)
+            return
+        }
+
+        if let path = ProcessInfo.processInfo.environment["LD_POLISH_VIS_SHOT"] {
+            renderPolishVisibilityShot(to: path)
+            return
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["LD_METER_TEST"] != nil {
             runMeterTest()
@@ -141,6 +151,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let path = ProcessInfo.processInfo.environment["LD_OVERLAY_SHOT"] {
             captureOverlay(to: path)
+            return
+        }
+        if ProcessInfo.processInfo.environment["LD_REVIEW_SUB_LIVE"] != nil {
+            runReviewSubstitutionLive()
             return
         }
         #endif
@@ -195,9 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         // Resting state, then the editor state (a multi-word selection) so both can
         // be reviewed off-screen.
-        writePanelPNG(ReviewPanel(record: record, onClose: {}, onReinsert: nil, staticHeight: true), to: path)
+        writePanelPNG(ReviewPanel(record: record, onClose: {}, staticHeight: true), to: path)
         writePanelPNG(
-            ReviewPanel(record: record, onClose: {}, onReinsert: nil, staticHeight: true, previewSelectedRange: 10...11),
+            ReviewPanel(record: record, onClose: {}, staticHeight: true, previewSelectedRange: 10...11),
             to: path.replacingOccurrences(of: ".png", with: "-editor.png")
         )
         exit(0)
@@ -218,6 +232,136 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? png.write(to: URL(fileURLWithPath: path))
         }
     }
+
+    /// Diagnostic (env LD_REVIEW_SUB_SHOT=<path>): renders the `.reviewSubstitution`
+    /// overlay to PNGs off-screen — the default all-accepted state and a
+    /// swap-2-toggled-off / manual (countdown cancelled) variant — so the inline
+    /// transcript, chips, and Keep/Apply buttons can be reviewed without a live
+    /// window or screen capture. Exits when done.
+    @MainActor
+    private func renderReviewSubstitutionShot(to path: String) {
+        let text = "deploy it to versal then spin up cuban eats"
+        let ns = text as NSString
+        let state = OverlayState()
+        state.phase = .reviewSubstitution
+        state.title = "Review swaps"
+        state.reviewText = text
+        state.pendingSwaps = [
+            OverlayState.PendingSwap(id: 1, range: ns.range(of: "versal"), from: "versal", to: "Vercel"),
+            OverlayState.PendingSwap(id: 2, range: ns.range(of: "cuban eats"), from: "cuban eats", to: "Kubernetes"),
+        ]
+        state.countdownTotal = 5
+        state.countdownRemaining = 4
+        state.countdownActive = true
+        writeOverlayPNG(state, to: path)
+
+        // Variant: user toggled swap 2 off → manual mode (countdown cancelled).
+        state.pendingSwaps[1].accepted = false
+        state.countdownActive = false
+        writeOverlayPNG(state, to: path.replacingOccurrences(of: ".png", with: "-toggled.png"))
+        exit(0)
+    }
+
+    /// Diagnostic (env LD_POLISH_VIS_SHOT=<path>): renders the polish-visibility
+    /// surfaces off-screen — the ⌃⌥Z provenance line across outcome states and the
+    /// HUD first-run "Polished" streak — so the copy/glyphs can be reviewed without
+    /// a mic or live window. Writes <path> (applied) plus -heldback/-unavailable/-off
+    /// panel variants and -hud for the overlay streak. Exits when done.
+    @MainActor
+    private func renderPolishVisibilityShot(to path: String) {
+        let sentence = "Deploy to Vercel, then push to Kubernetes."
+        func record(_ outcome: PolishOutcome?) -> CorrectionRecord {
+            CorrectionRecord(raw: sentence, prePolish: sentence, inserted: sentence,
+                             segmentA: [], segmentB: [], polishOutcome: outcome)
+        }
+        func variant(_ suffix: String) -> String {
+            suffix.isEmpty ? path : path.replacingOccurrences(of: ".png", with: "-\(suffix).png")
+        }
+        let states: [(String, PolishOutcome?)] = [
+            ("", .applied(sentence)),
+            ("heldback", .guardRejected(sentence)),
+            ("unavailable", .unavailable(sentence)),
+            ("off", nil),
+        ]
+        for (suffix, outcome) in states {
+            writePanelPNG(ReviewPanel(record: record(outcome), onClose: {}, staticHeight: true),
+                          to: variant(suffix))
+        }
+        let hud = OverlayState()
+        hud.phase = .done
+        hud.title = "Typed"
+        hud.detail = sentence
+        hud.polishStreak = true
+        writeOverlayPNG(hud, to: variant("hud"))
+        exit(0)
+    }
+
+    @MainActor
+    private func writeOverlayPNG(_ state: OverlayState, to path: String) {
+        let view = OverlayView(state: state)
+            .frame(width: 464, height: 380)
+            .background(Color(red: 0.05, green: 0.10, blue: 0.12))
+            .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        if let image = renderer.nsImage,
+           let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    #if DEBUG
+    /// Diagnostic (env LD_REVIEW_SUB_LIVE): shows the real `.reviewSubstitution`
+    /// overlay with two canned swaps and the real confirmer, so the mouse-driven
+    /// toggle / Apply / Keep interaction can be smoke-tested without a microphone.
+    /// Writes the resolved decision to /tmp/ld-review-sub-decision.txt and exits.
+    @MainActor
+    private func runReviewSubstitutionLive() {
+        let overlay = OverlayController()
+        let confirmer = SubstitutionConfirmer(overlay: overlay)
+        let text = "deploy it to versal then spin up cuban eats"
+        let ns = text as NSString
+        let swaps = [
+            ProposedSwap(range: ns.range(of: "versal"), from: "versal", to: "Vercel"),
+            ProposedSwap(range: ns.range(of: "cuban eats"), from: "cuban eats", to: "Kubernetes"),
+        ]
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        // Headless smoke (LD_REVIEW_SUB_SIM): drive the toggle/apply/keep closures a
+        // click would fire, so the confirmer path is exercised without a mouse.
+        if let sim = ProcessInfo.processInfo.environment["LD_REVIEW_SUB_SIM"] {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(800))  // let confirm() wire the actions
+                switch sim {
+                case "keep":
+                    overlay.simulateReviewKeep()
+                case "toggle2-apply":
+                    overlay.simulateReviewToggle(id: 2)          // "click" swap 2 off
+                    let active = overlay.debugCountdownActive     // expect false (countdown cancelled)
+                    try? ("toggledOff=2 countdownActiveAfterToggle=\(active)\n")
+                        .write(toFile: "/tmp/ld-review-sub-sim.txt", atomically: true, encoding: .utf8)
+                    try? await Task.sleep(for: .milliseconds(150))
+                    overlay.simulateReviewApply()                // "click" Apply
+                default:
+                    overlay.simulateReviewApply()                // apply all
+                }
+            }
+        }
+        Task { @MainActor in
+            let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: 180)
+            let desc: String
+            switch decision {
+            case .keepOriginal: desc = "keepOriginal"
+            case .apply(let s): desc = "apply(" + s.map { "\($0.from)->\($0.to)" }.joined(separator: ", ") + ")"
+            }
+            print("LD_REVIEW_SUB_LIVE decision: \(desc)")
+            try? (desc + "\n").write(toFile: "/tmp/ld-review-sub-decision.txt", atomically: true, encoding: .utf8)
+            exit(0)
+        }
+    }
+    #endif
 
     /// Diagnostic (env LD_CONTEXT_PROBE=<file>): lets the context pipeline be
     /// verified at runtime WITHOUT a microphone. Logs accessibility/OCR-permission
@@ -432,6 +576,7 @@ private struct OverlayPreview: View {
         switch phase {
         case .listening: "Listening"
         case .transcribing: "Transcribing"
+        case .reviewSubstitution: "Review swaps"
         case .done: "Inserted"
         case .error: "Error"
         case .cancelled: "Cancelled"
