@@ -29,6 +29,16 @@ cp "$PROJECT_DIR/.build/release/LocalDictation" "$MACOS_DIR/LocalDictation"
 # Resolve bundled frameworks (Sparkle, etc.) from inside the .app.
 install_name_tool -add_rpath @executable_path/../Frameworks "$MACOS_DIR/LocalDictation" 2>/dev/null || true
 
+# SwiftPM package resource bundles (e.g. KeyboardShortcuts' localized strings).
+# The generated `Bundle.module` accessor fatalErrors if its .bundle isn't beside
+# the app's resources — which crashed the Settings shortcut recorder on every
+# clean install (dev/`swift run` found it in .build, so it only hit users).
+for resource_bundle in "$PROJECT_DIR/.build/release/"*.bundle; do
+    [ -e "$resource_bundle" ] || continue
+    cp -R "$resource_bundle" "$RESOURCES_DIR/"
+    echo "Bundled resource: $(basename "$resource_bundle")"
+done
+
 # App icon: regenerate the iconset → .icns, then bundle it.
 rm -rf "$PROJECT_DIR/AppIcon.iconset"
 swift "$PROJECT_DIR/scripts/make-icon.swift" "$PROJECT_DIR/AppIcon.iconset"
