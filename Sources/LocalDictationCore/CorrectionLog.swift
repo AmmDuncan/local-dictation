@@ -18,6 +18,9 @@ public struct CorrectionRecord: Equatable, Sendable, Codable, Identifiable {
     public var segmentA: [Edit]
     /// Post-polish replacements, in `inserted` space.
     public var segmentB: [Edit]
+    /// What the optional LLM polish pass did this dictation (nil when polish is off).
+    /// Drives the review-panel provenance line + the menu-bar lifetime tally.
+    public var polishOutcome: PolishOutcome?
 
     public var changeCount: Int { segmentA.count + segmentB.count }
 
@@ -28,6 +31,7 @@ public struct CorrectionRecord: Equatable, Sendable, Codable, Identifiable {
         inserted: String,
         segmentA: [Edit],
         segmentB: [Edit],
+        polishOutcome: PolishOutcome? = nil,
         date: Date = Date()
     ) {
         self.id = id
@@ -36,6 +40,7 @@ public struct CorrectionRecord: Equatable, Sendable, Codable, Identifiable {
         self.inserted = inserted
         self.segmentA = segmentA
         self.segmentB = segmentB
+        self.polishOutcome = polishOutcome
         self.date = date
     }
 }

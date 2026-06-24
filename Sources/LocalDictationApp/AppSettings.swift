@@ -29,6 +29,26 @@ enum AppSettingsKeys {
     static let contextSubstitutionEnabled = "contextSubstitutionEnabled"
     static let contextSubstitutionCountdown = "contextSubstitutionCountdown"
     static let rejectedContextSubSwaps = "rejectedContextSubSwaps"
+    // Polish visibility (runtime counters, not user-facing settings): the lifetime
+    // tally shown in the readiness strip, and the self-quieting first-run proof
+    // streak shown on the HUD (reset when the polish model changes).
+    static let polishAppliedCount = "polishAppliedCount"
+    static let polishHeldBackCount = "polishHeldBackCount"
+    static let polishProofShown = "polishProofShown"
+    static let polishProofModelPath = "polishProofModelPath"
+}
+
+/// First-run "Polished" HUD streak length and a comma-grouped tally formatter,
+/// kept here so the overlay, readiness strip, and counter logic agree.
+enum PolishProof {
+    /// How many of the first successful (applied) polishes show the HUD "Polished"
+    /// sub-line before it auto-quiets forever. Single knob (Ammiel may tune 3…7).
+    static let streakLength = 5
+
+    static func grouped(_ n: Int) -> String {
+        let f = NumberFormatter(); f.numberStyle = .decimal
+        return f.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
 }
 
 /// How transcribed text reaches the cursor.
@@ -159,7 +179,7 @@ struct AppSettingsSnapshot: Equatable {
         static let inputDeviceUID = ""  // empty = system default input
         static let cleanUpTranscript = true
         static let polishWithAI = false  // opt-in: needs the ~3GB model + resident llama-server
-        static let polishModelPath = "~/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+        static let polishModelPath = "~/models/gemma-4-E2B-it-Q4_K_M.gguf"
         static let customVocabulary = ""  // user terms/names/jargon to bias whisper toward
         static let useDefaultVocabulary = true  // bias toward common terms (Claude, GitHub, …)
         // Use the focused app + caret-preceding text to bias recognition and enable

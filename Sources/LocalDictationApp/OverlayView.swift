@@ -363,6 +363,15 @@ struct OverlayView: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(inkDim)
                 }
+                // First-run proof only: rebuilds belief that polish runs, then
+                // permanently quiets (steady-state success shows nothing here).
+                if state.polishStreak {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles").font(.system(size: 10))
+                        Text("Polished on-device").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(inkDim)
+                }
             }
         }
         .frame(maxWidth: .infinity)

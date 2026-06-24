@@ -23,6 +23,10 @@ final class OverlayState {
     /// Ranges (UTF-16, in `detail`) of words the system swapped, for the "Typed"
     /// card to flat-underline. Empty unless the `.done` card has reviewable swaps.
     var swappedRanges: [NSRange] = []
+    /// One-time first-run "Polished on-device" proof on the `.done` card. True only
+    /// for the first few applied polishes after polish is enabled / the model swaps,
+    /// then permanently false — steady-state success stays silent.
+    var polishStreak: Bool = false
 
     /// Proposed swaps for the .reviewSubstitution phase, with per-swap accepted flag.
     var pendingSwaps: [PendingSwap] = []
@@ -94,9 +98,10 @@ final class OverlayController {
         present(phase: .transcribing, title: "Transcribing", detail: "Private, on your Mac")
     }
 
-    func showDone(text: String, swappedRanges: [NSRange] = []) {
+    func showDone(text: String, swappedRanges: [NSRange] = [], polishStreak: Bool = false) {
         stopLevelUpdates()
         state.swappedRanges = swappedRanges
+        state.polishStreak = polishStreak
         present(phase: .done, title: "Typed", detail: text)
     }
 
@@ -190,7 +195,7 @@ final class OverlayController {
             state.actionTitle = nil
             state.action = nil
         }
-        if phase != .done { state.swappedRanges = [] }
+        if phase != .done { state.swappedRanges = []; state.polishStreak = false }
         if phase != .reviewSubstitution {
             state.pendingSwaps = []
             state.reviewText = ""

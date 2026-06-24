@@ -92,8 +92,57 @@ struct LocalDictationCoreTestRunner {
         await suite.run("guard rejects non-candidate duplication", testGuardRejectsNonCandidateDuplication)
         await suite.run("guard rejects expansion", testGuardRejectsExpansion)
         await suite.run("diff handles NBSP whitespace", testDiffUnicodeWhitespace)
+        await suite.run("CustomVocabulary.terms splits on comma + newline", testCustomVocabularyTerms)
+        await suite.run("substitution candidates include custom vocab", testSubstitutionCandidatesCustomVocab)
+        await suite.run("substitution candidates include defaults", testSubstitutionCandidatesDefaults)
+        await suite.run("substitution candidates dedupe case-insensitively", testSubstitutionCandidatesDedupe)
+        await suite.run("substitution candidates include on-screen context", testSubstitutionCandidatesOnScreen)
+        await suite.run("substitution candidates cap at limit, vocab leads", testSubstitutionCandidatesCap)
+        await suite.run("PolishOutcome.text returns the insertable text", testPolishOutcomeText)
+        await suite.run("Polish outcome classification", testPolishOutcomeClassification)
+        await suite.run("Workflow exposes the polish outcome", testWorkflowExposesPolishOutcome)
         suite.finish()
     }
+}
+
+private func testCustomVocabularyTerms() throws {
+    let terms = CustomVocabulary.terms("Vercel, Kubernetes\nVue\n\n  Docker  ,")
+    try expect(terms == ["Vercel", "Kubernetes", "Vue", "Docker"],
+               "split on comma + newline, trimmed, empties dropped; got \(terms)")
+    try expect(CustomVocabulary.terms("") == [], "empty list → no terms")
+}
+
+private func testSubstitutionCandidatesCustomVocab() throws {
+    let c = ContextBias.substitutionCandidates(customVocabulary: "Vercel\nVue", defaults: [], context: nil)
+    try expect(c.contains("Vercel") && c.contains("Vue"), "custom vocab terms must be candidates; got \(c)")
+}
+
+private func testSubstitutionCandidatesDefaults() throws {
+    let c = ContextBias.substitutionCandidates(customVocabulary: "", defaults: ["Kubernetes", "Postgres"], context: nil)
+    try expect(c.contains("Kubernetes") && c.contains("Postgres"), "built-in defaults must be candidates; got \(c)")
+}
+
+private func testSubstitutionCandidatesDedupe() throws {
+    let c = ContextBias.substitutionCandidates(customVocabulary: "vercel", defaults: ["Vercel"], context: nil)
+    try expect(c.filter { $0.lowercased() == "vercel" }.count == 1, "case-insensitive dedupe; got \(c)")
+}
+
+private func testSubstitutionCandidatesOnScreen() throws {
+    let ctx = ContextBias.PromptContext(
+        appVocabulary: ContextBias.vocabulary(for: .terminal),
+        candidates: ["UserStore.swift", "feat/login"]
+    )
+    let c = ContextBias.substitutionCandidates(customVocabulary: "", defaults: [], context: ctx)
+    try expect(c.contains("UserStore.swift") && c.contains("feat/login"), "on-screen candidates included; got \(c)")
+    try expect(c.contains("git"), "app-class vocabulary included; got \(c)")
+}
+
+private func testSubstitutionCandidatesCap() throws {
+    let ctx = ContextBias.PromptContext(candidates: (0..<50).map { "tok\($0)" })
+    let c = ContextBias.substitutionCandidates(customVocabulary: "Vercel", defaults: ["Kubernetes"], context: ctx, limit: 5)
+    try expect(c.count == 5, "capped at limit; got \(c.count)")
+    try expect(c.first == "Vercel", "custom vocab leads so the cap preserves it; got \(c)")
+    try expect(c.contains("Kubernetes"), "defaults precede on-screen tokens under the cap; got \(c)")
 }
 
 private func testHelperReaperPathMatching() throws {
@@ -824,7 +873,7 @@ private func testWorkflowSurfacesCorrectedTranscript() async throws {
     // app surfaces via lastTranscript (history, menu bar, overlay). This was the
     // bug: "clot" showed everywhere even though "Claude" was what got typed.
     let inserter = StubInserter()
-    let polisher = FakePolisher { $0.replacingOccurrences(of: "clot", with: "Claude") }
+    let polisher = FakePolisher { .applied($0.replacingOccurrences(of: "clot", with: "Claude")) }
     let workflow = DictationWorkflow(
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "I am coding with clot"),
@@ -849,7 +898,7 @@ private func testWorkflowPreCorrectRunsBeforePolish() async throws {
     // Deterministic mishearing fix must run before the polisher, so the polisher
     // receives the corrected term — not the raw mishearing it would mangle.
     let inserter = StubInserter()
-    let polisher = FakePolisher { $0 }  // identity: passes its input straight through
+    let polisher = FakePolisher { .unchanged($0) }  // identity: passes its input straight through
     let workflow = DictationWorkflow(
         recorder: StubRecorder(),
         transcriber: StubTranscriber(transcript: "ship it with clot today"),
@@ -1652,17 +1701,53 @@ private final class StubInserter: TextInserting, @unchecked Sendable {
 }
 
 private final class FakePolisher: TextPolishing, @unchecked Sendable {
-    private let transform: @Sendable (String) -> String
+    private let transform: @Sendable (String) -> PolishOutcome
     private(set) var receivedInput: String?
 
-    init(_ transform: @escaping @Sendable (String) -> String) {
+    init(_ transform: @escaping @Sendable (String) -> PolishOutcome) {
         self.transform = transform
     }
 
-    func polish(_ text: String) async -> String {
+    func polish(_ text: String) async -> PolishOutcome {
         receivedInput = text
         return transform(text)
     }
+}
+
+private func testPolishOutcomeText() throws {
+    try expect(PolishOutcome.applied("Hi.").text == "Hi.", "applied carries the polished text")
+    try expect(PolishOutcome.unchanged("hi").text == "hi", "unchanged carries the input")
+    try expect(PolishOutcome.guardRejected("raw").text == "raw", "guardRejected keeps the original")
+    try expect(PolishOutcome.unavailable("raw").text == "raw", "unavailable keeps the original")
+}
+
+private func testPolishOutcomeClassification() throws {
+    try expect(TranscriptPolisher.outcome(forContent: nil, original: "the report") == .unavailable("the report"),
+               "nil content → unavailable")
+    try expect(TranscriptPolisher.outcome(forContent: "", original: "the report") == .unavailable("the report"),
+               "empty content → unavailable")
+    try expect(TranscriptPolisher.outcome(forContent: "the quarterly status report is late now", original: "the report") == .guardRejected("the report"),
+               "added content words → guardRejected, original kept")
+    try expect(TranscriptPolisher.outcome(forContent: "the report", original: "the report") == .unchanged("the report"),
+               "byte-identical faithful reply → unchanged")
+    try expect(TranscriptPolisher.outcome(forContent: "The report.", original: "the report") == .applied("The report."),
+               "faithful reformat (caps/punct) → applied(polished)")
+}
+
+private func testWorkflowExposesPolishOutcome() async throws {
+    let inserter = StubInserter()
+    let polisher = FakePolisher { _ in .applied("The report.") }
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "the report"),
+        inserter: inserter,
+        polisher: polisher
+    )
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(workflow.lastTranscriptAndEdits?.polish == .applied("The report."),
+               "workflow threads the polish outcome onto its result")
+    try expect(inserter.insertedText == "The report.", "inserts outcome.text, got \(inserter.insertedText ?? "nil")")
 }
 
 private func testEditSourceContextSubRoundTrips() throws {

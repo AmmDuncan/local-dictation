@@ -15,4 +15,14 @@ public enum CustomVocabulary {
         guard !existing.contains(trimmed.lowercased()) else { return list }
         return list.isEmpty ? trimmed : list + "\n" + trimmed
     }
+
+    /// Split the freeform list into discrete terms — one per line or comma —
+    /// trimmed, empties dropped. Used where the list is consumed as an allow-list
+    /// of distinct terms (e.g. context-substitution candidates), as opposed to the
+    /// whisper bias prompt where the whole string is fed verbatim.
+    public static func terms(_ list: String) -> [String] {
+        list.split(whereSeparator: { $0.isNewline || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
 }

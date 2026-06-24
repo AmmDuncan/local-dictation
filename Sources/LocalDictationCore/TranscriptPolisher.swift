@@ -139,13 +139,43 @@ public enum TranscriptPolisher {
         // the model added or substituted a word that isn't in the original.
         return matched == pol.count
     }
+
+    /// Classify a polish attempt from its already-parsed model output. `content` is
+    /// the trimmed model reply, or nil when the request failed / returned nothing
+    /// usable. Pure, so the four-way mapping is unit-testable without a live server.
+    public static func outcome(forContent content: String?, original: String) -> PolishOutcome {
+        guard let content, !content.isEmpty else { return .unavailable(original) }
+        guard preservesContentWords(polished: content, original: original) else { return .guardRejected(original) }
+        return content == original ? .unchanged(original) : .applied(content)
+    }
 }
 
-/// Optional post-transcription cleanup that may run an external model. Returns
-/// cleaned text, or the input unchanged on any failure — it must never throw or
-/// block insertion.
+/// What a polish pass did, plus the text to insert. The text is always the safe
+/// choice — the polished output on success, the original on any fallback — so
+/// insertion is byte-for-byte unaffected by which case occurred. Lets the UI tell
+/// the four outcomes apart where the old bare-`String` return collapsed them into
+/// one. `guardRejected` (the faithfulness guard kept the user's words — the safety
+/// feature working) is deliberately distinct from `unavailable` (the model never
+/// ran — the thing that silently erodes trust).
+public enum PolishOutcome: Sendable, Equatable, Codable {
+    case applied(String)        // ran, passed the guard, changed the text
+    case unchanged(String)      // ran, passed the guard, output == input (nothing to fix)
+    case guardRejected(String)  // ran, but the output failed the faithfulness guard → original kept
+    case unavailable(String)    // model/server unreachable or unusable reply → original kept
+
+    /// The text to insert. Always defined.
+    public var text: String {
+        switch self {
+        case let .applied(t), let .unchanged(t), let .guardRejected(t), let .unavailable(t): return t
+        }
+    }
+}
+
+/// Optional post-transcription cleanup that may run an external model. Returns a
+/// `PolishOutcome` whose `.text` is the input unchanged on any failure — it must
+/// never throw or block insertion.
 public protocol TextPolishing: Sendable {
-    func polish(_ text: String) async -> String
+    func polish(_ text: String) async -> PolishOutcome
 }
 
 /// Polishes via a resident llama-server (`/v1/chat/completions`). Any failure —
@@ -161,8 +191,8 @@ public struct LlamaPolishEngine: TextPolishing {
         self.timeoutSeconds = timeoutSeconds
     }
 
-    public func polish(_ text: String) async -> String {
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return text }
+    public func polish(_ text: String) async -> PolishOutcome {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return .unchanged(text) }
 
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/chat/completions"))
         request.httpMethod = "POST"
@@ -172,14 +202,12 @@ public struct LlamaPolishEngine: TextPolishing {
 
         guard
             let (data, response) = try? await URLSession.shared.data(for: request),
-            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-            let content = TranscriptPolisher.parseContent(data)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !content.isEmpty,
-            TranscriptPolisher.preservesContentWords(polished: content, original: text)
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
         else {
-            return text
+            return .unavailable(text)   // network / status — the model didn't run
         }
-        return content
+        let content = TranscriptPolisher.parseContent(data)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return TranscriptPolisher.outcome(forContent: content, original: text)
     }
 }

@@ -27,7 +27,9 @@ enum PolishModelCatalog {
         PolishModel(
             id: "gemma-4-e2b",
             displayName: "Gemma 4 E2B",
-            filename: "google_gemma-4-E2B-it-Q4_K_M.gguf",
+            // Local filename (saved under this regardless of the URL basename). The
+            // bartowski source is `google_…`; we drop the prefix for a cleaner name.
+            filename: "gemma-4-E2B-it-Q4_K_M.gguf",
             sizeBytes: 3_462_678_272,
             sha256: "b5310340b3a23d31655d7119d100d5df1b2d8ee17b3ca8b0a23ad7e9eb5fa705",
             url: URL(string: "https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf")!,

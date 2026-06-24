@@ -138,8 +138,49 @@ struct ReviewPanel: View {
                 Text("Here's what I typed — corrections highlighted.")
                     .font(.system(size: 13))
                     .foregroundStyle(inkDim)
+                polishProvenanceLine
             }
             Spacer(minLength: 8)
+        }
+    }
+
+    /// One quiet, always-present line stating what the LLM polish did this dictation
+    /// — the on-demand answer to "is it actually doing anything?" on the one screen
+    /// opened to scrutinise a result. Glyph SHAPE (not colour) distinguishes the
+    /// states, and each carries a VoiceOver label. `guardRejected` is framed as the
+    /// faithfulness guard working FOR the user, not a failure.
+    @ViewBuilder
+    private var polishProvenanceLine: some View {
+        let p = polishProvenance
+        HStack(spacing: 5) {
+            Image(systemName: p.glyph).font(.system(size: 11))
+            Text(p.text).font(.system(size: 12))
+        }
+        .foregroundStyle(p.positive ? Brand.emerald : inkDim)
+        .padding(.top, 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(p.spoken)
+    }
+
+    private struct PolishProvenance {
+        let glyph: String
+        let text: String
+        let positive: Bool
+        let spoken: String
+    }
+
+    private var polishProvenance: PolishProvenance {
+        switch record.polishOutcome {
+        case .applied:
+            return PolishProvenance(glyph: "checkmark.circle.fill", text: "Polished on-device", positive: true, spoken: "Polished on device")
+        case .unchanged:
+            return PolishProvenance(glyph: "checkmark.circle", text: "Polished on-device — nothing to change", positive: false, spoken: "Polished on device, nothing to change")
+        case .guardRejected:
+            return PolishProvenance(glyph: "exclamationmark.shield", text: "Polish held back — kept your exact words", positive: false, spoken: "Polish held back, kept your exact words")
+        case .unavailable:
+            return PolishProvenance(glyph: "circle", text: "Polish unavailable — model not loaded", positive: false, spoken: "Polish unavailable, model not loaded")
+        case .none:
+            return PolishProvenance(glyph: "minus", text: "Polish off", positive: false, spoken: "Polish off")
         }
     }
 

@@ -178,15 +178,37 @@ def start_server(model):
     sys.exit("llama-server did not become ready")
 
 
-def run_model(model):
-    print(f"\n########## model={os.path.basename(model)} ##########", flush=True)
+# Union of every case's candidates — simulates the app feeding the whole
+# vocabulary as candidates for every dictation (the real behaviour after wiring
+# custom + built-in vocab into ContextBias.substitutionCandidates), the
+# adversarial worst case: every corruption trap is present for every case.
+POOL = sorted({c for (_, cands, _, _) in CASES for c in cands})
+
+# The app's real default candidate pool when useDefaultVocabulary is on: mirrors
+# DefaultVocabulary.swift (brand/tool terms only — deliberately NO bare common
+# words like git/main/fetch, which live in the terminal-only developerVocabulary).
+# This is the realistic pool size to validate, vs the 68-term worst-case union.
+DEFAULT_VOCAB = [
+    "Claude", "Anthropic", "ChatGPT", "OpenAI", "Qwen", "Gemini", "LLM",
+    "TypeScript", "JavaScript", "Python", "Swift", "SwiftUI", "React", "Next.js",
+    "Tailwind", "Node.js", "GitHub", "Xcode", "npm", "Docker", "Kubernetes",
+    "Postgres", "API", "Figma", "Slack", "Notion", "Vercel", "Supabase", "vibe coding",
+]
+
+
+def run_model(model, pool=None):
+    tag = f" [POOL of {len(pool)}]" if pool else ""
+    print(f"\n########## model={os.path.basename(model)}{tag} ##########", flush=True)
+    if pool:
+        print(f"(pool = {len(pool)} candidates: {', '.join(pool)})", flush=True)
     proc = start_server(model)
     strategies = ["formatting", "free", "constrained"]
     rows = {s: {"fix": 0, "mishear": 0, "corrupt": 0, "correct": 0, "details": []} for s in strategies}
     try:
         for (transcript, candidates, gold, kind) in CASES:
+            cands = pool if pool else candidates
             for s in strategies:
-                out = run_case(transcript, candidates, s)
+                out = run_case(transcript, cands, s)
                 ok_gold = norm(out) == norm(gold)
                 if kind == "mishear":
                     rows[s]["mishear"] += 1
@@ -218,12 +240,17 @@ def run_model(model):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", default=f"{HOME}/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf,{HOME}/models/gemma-4-E4B_q4_0-it.gguf")
+    ap.add_argument("--pooled", action="store_true",
+                    help="feed the 68-term union of all candidates to every case (worst case)")
+    ap.add_argument("--pool-default", action="store_true",
+                    help="feed the app's DefaultVocabulary (~29 brand terms) to every case (realistic)")
     a = ap.parse_args()
+    pool = POOL if a.pooled else (DEFAULT_VOCAB if a.pool_default else None)
     nm = sum(1 for c in CASES if c[3] == "mishear")
     print(f"=== context-grounded substitution A/B (guard v2; {len(CASES)} cases: {nm} mishear / {len(CASES)-nm} correct-trap) ===", flush=True)
     for m in [x.strip() for x in a.models.split(",") if x.strip()]:
         if os.path.exists(m):
-            run_model(m)
+            run_model(m, pool=pool)
         else:
             print(f"(skip — missing model {m})", flush=True)
 

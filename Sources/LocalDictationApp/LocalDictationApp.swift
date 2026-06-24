@@ -131,6 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if let path = ProcessInfo.processInfo.environment["LD_POLISH_VIS_SHOT"] {
+            renderPolishVisibilityShot(to: path)
+            return
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["LD_METER_TEST"] != nil {
             runMeterTest()
@@ -254,6 +259,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.pendingSwaps[1].accepted = false
         state.countdownActive = false
         writeOverlayPNG(state, to: path.replacingOccurrences(of: ".png", with: "-toggled.png"))
+        exit(0)
+    }
+
+    /// Diagnostic (env LD_POLISH_VIS_SHOT=<path>): renders the polish-visibility
+    /// surfaces off-screen — the ⌃⌥Z provenance line across outcome states and the
+    /// HUD first-run "Polished" streak — so the copy/glyphs can be reviewed without
+    /// a mic or live window. Writes <path> (applied) plus -heldback/-unavailable/-off
+    /// panel variants and -hud for the overlay streak. Exits when done.
+    @MainActor
+    private func renderPolishVisibilityShot(to path: String) {
+        let sentence = "Deploy to Vercel, then push to Kubernetes."
+        func record(_ outcome: PolishOutcome?) -> CorrectionRecord {
+            CorrectionRecord(raw: sentence, prePolish: sentence, inserted: sentence,
+                             segmentA: [], segmentB: [], polishOutcome: outcome)
+        }
+        func variant(_ suffix: String) -> String {
+            suffix.isEmpty ? path : path.replacingOccurrences(of: ".png", with: "-\(suffix).png")
+        }
+        let states: [(String, PolishOutcome?)] = [
+            ("", .applied(sentence)),
+            ("heldback", .guardRejected(sentence)),
+            ("unavailable", .unavailable(sentence)),
+            ("off", nil),
+        ]
+        for (suffix, outcome) in states {
+            writePanelPNG(ReviewPanel(record: record(outcome), onClose: {}, onReinsert: nil, staticHeight: true),
+                          to: variant(suffix))
+        }
+        let hud = OverlayState()
+        hud.phase = .done
+        hud.title = "Typed"
+        hud.detail = sentence
+        hud.polishStreak = true
+        writeOverlayPNG(hud, to: variant("hud"))
         exit(0)
     }
 

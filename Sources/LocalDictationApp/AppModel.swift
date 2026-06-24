@@ -396,15 +396,18 @@ final class AppModel {
             // (Door #1 hotkey), the Learn-tab log entry, and the swap underlines on
             // the "Typed" card.
             var swappedRanges: [NSRange] = []
+            var showPolishStreak = false
             if !transcript.isEmpty, let edits = workflow.lastTranscriptAndEdits {
                 let record = CorrectionRecord(
                     raw: edits.raw,
                     prePolish: edits.prePolish,
                     inserted: edits.final,
                     segmentA: edits.segmentA,
-                    segmentB: edits.segmentB
+                    segmentB: edits.segmentB,
+                    polishOutcome: edits.polish
                 )
                 lastRecord = record
+                showPolishStreak = recordPolishOutcome(edits.polish)
                 // text only; gated on the privacy-respecting logCorrections toggle.
                 if settings.logCorrections { CorrectionLogStore.append(record) }
                 swappedRanges = validSwapRanges(in: transcript, edits: edits.segmentA + edits.segmentB)
@@ -419,7 +422,7 @@ final class AppModel {
                 if transcript.isEmpty {
                     overlayController.hide(after: 0.4)
                 } else {
-                    overlayController.showDone(text: transcript, swappedRanges: swappedRanges)
+                    overlayController.showDone(text: transcript, swappedRanges: swappedRanges, polishStreak: showPolishStreak)
                     overlayController.hide(after: 2.4)
                 }
             }
@@ -523,22 +526,32 @@ final class AppModel {
         // Shares the resident polish model. Reuses the SAME candidates whisper
         // is biased with (ContextBias), so swaps only target present terms.
         let ctxSubEnabled = settings.contextSubstitutionEnabled
-        let candidates: [String] = context
-            .map { ContextBias.promptContext(for: $0) }
-            .map { $0.candidates + $0.appVocabulary } ?? []
+        // Candidates the LLM may swap a misheard word toward: the user's vocabulary
+        // (custom + built-in defaults) plus the live on-screen context. Vocabulary
+        // is the high-signal source the feature targets — brand/jargon terms like
+        // "Vercel"/"Kubernetes" aren't identifier-shaped so they never surface as
+        // on-screen candidates, and they're the canonical things to fix.
+        let candidates = ContextBias.substitutionCandidates(
+            customVocabulary: settings.customVocabulary,
+            defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
+            context: context.map { ContextBias.promptContext(for: $0) }
+        )
         let countdown = settings.contextSubstitutionCountdown
         let confirmer = substitutionConfirmer
         let manager = llamaManager
         // Swaps the user has already rejected from a CONTEXT chip — never re-propose
         // them (keyed "<from> -> <to>", matching ReviewPanel.revertChange).
         let ctxSubSuppressed = SuppressionSet.decode(settings.rejectedContextSubSwaps)
+        ctxSubDebugLog("makeWorkflow: ctxSubEnabled=\(ctxSubEnabled) candidates(\(candidates.count))=\(candidates.prefix(16).joined(separator: "|"))")
         let contextSubstitute: (@Sendable (String) async -> (String, [Edit]))? = (ctxSubEnabled && !candidates.isEmpty)
             ? { @Sendable text in
-                guard let baseURL = await manager.awaitReady(timeout: 30) else { return (text, []) }
+                ctxSubDebugLog("input=\(text.debugDescription)")
+                guard let baseURL = await manager.awaitReady(timeout: 30) else { ctxSubDebugLog("llama NOT ready"); return (text, []) }
                 let engine = ContextSubstituteEngine(baseURL: baseURL, candidates: candidates)
                 let swaps = await engine.proposals(for: text).filter {
                     !ctxSubSuppressed.contains("\($0.from) -> \($0.to)")
                 }
+                ctxSubDebugLog("proposals(\(swaps.count))=\(swaps.map { "\($0.from)->\($0.to)" }.joined(separator: "|"))")
                 guard !swaps.isEmpty else { return (text, []) }
                 let decision = await confirmer.confirm(text: text, swaps: swaps, countdown: countdown)
                 switch decision {
@@ -646,6 +659,36 @@ final class AppModel {
         var vocab = UserDefaults.standard.string(forKey: AppSettingsKeys.customVocabulary) ?? ""
         for t in targets { vocab = CustomVocabulary.appending(t, to: vocab) }
         UserDefaults.standard.set(vocab, forKey: AppSettingsKeys.customVocabulary)
+    }
+
+    /// Fold this dictation's polish outcome into the persisted visibility counters
+    /// (the readiness-strip lifetime tally) and the self-quieting first-run proof
+    /// streak. Returns true when the HUD should show its one-time "Polished
+    /// on-device" sub-line for THIS dictation — only for the first `streakLength`
+    /// applied polishes against a given polish model (re-armed when the model
+    /// path changes, including the first-ever run vs the empty default), then never.
+    private func recordPolishOutcome(_ outcome: PolishOutcome?) -> Bool {
+        let d = UserDefaults.standard
+        func bump(_ key: String) { d.set(d.integer(forKey: key) + 1, forKey: key) }
+        switch outcome {
+        case .applied:
+            bump(AppSettingsKeys.polishAppliedCount)
+            // A model swap resets the streak so trust is rebuilt for the new model.
+            let model = AppSettingsSnapshot.current.polishModelPath
+            if d.string(forKey: AppSettingsKeys.polishProofModelPath) != model {
+                d.set(0, forKey: AppSettingsKeys.polishProofShown)
+                d.set(model, forKey: AppSettingsKeys.polishProofModelPath)
+            }
+            let shown = d.integer(forKey: AppSettingsKeys.polishProofShown)
+            guard shown < PolishProof.streakLength else { return false }
+            d.set(shown + 1, forKey: AppSettingsKeys.polishProofShown)
+            return true
+        case .guardRejected:
+            bump(AppSettingsKeys.polishHeldBackCount)
+            return false
+        case .unchanged, .unavailable, .none:
+            return false
+        }
     }
 
     /// Persist the transcript to the user-facing history view (when enabled). This
@@ -797,8 +840,8 @@ private struct ServerBackedPolisher: TextPolishing {
     let serverManager: ResidentServerManager
     let serverWait: TimeInterval
 
-    func polish(_ text: String) async -> String {
-        guard let baseURL = await serverManager.awaitReady(timeout: serverWait) else { return text }
+    func polish(_ text: String) async -> PolishOutcome {
+        guard let baseURL = await serverManager.awaitReady(timeout: serverWait) else { return .unavailable(text) }
         return await LlamaPolishEngine(baseURL: baseURL).polish(text)
     }
 }
@@ -844,5 +887,24 @@ private struct ResolvingTranscriptionEngine: TranscriptionEngine {
         }
         return try await WhisperCLITranscriptionEngine(configuration: configuration)
             .transcribe(audioFile: audioFile)
+    }
+}
+
+/// Diagnostic (env LD_CTXSUB_DEBUG): append a line to /tmp/ld-ctxsub-debug.log so a
+/// mic smoke can see exactly what context substitution received (input + candidates)
+/// and proposed — disambiguating "no overlay" between whisper-got-it-right (input
+/// already correct → 0 proposals) and a real wiring gap. No-op unless the env var
+/// is set, so production builds never touch the file. Free function (not actor-
+/// isolated) so the off-main @Sendable substitution closure can call it directly.
+func ctxSubDebugLog(_ line: String) {
+    guard ProcessInfo.processInfo.environment["LD_CTXSUB_DEBUG"] != nil else { return }
+    let entry = Data((line + "\n").utf8)
+    let path = "/tmp/ld-ctxsub-debug.log"
+    if let fh = FileHandle(forWritingAtPath: path) {
+        defer { try? fh.close() }
+        fh.seekToEndOfFile()
+        fh.write(entry)
+    } else {
+        try? entry.write(to: URL(fileURLWithPath: path))
     }
 }

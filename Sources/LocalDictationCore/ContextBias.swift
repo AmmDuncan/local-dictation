@@ -113,6 +113,35 @@ public enum ContextBias {
         )
     }
 
+    /// The allow-list context substitution may swap a misheard word toward: the
+    /// user's curated vocabulary (custom terms first, then the built-in defaults
+    /// when enabled), followed by the live on-screen context (extracted identifier
+    /// candidates, then app-class vocabulary). Vocabulary leads so the cap keeps
+    /// the curated, low-noise terms the feature is designed around — the A/B
+    /// harness that validated the swap safety feeds candidates that are exactly
+    /// these "on-screen / vocabulary" terms. Deduped case-insensitively (first
+    /// occurrence wins) and capped. Empty → substitution is skipped entirely.
+    public static func substitutionCandidates(
+        customVocabulary: String,
+        defaults: [String] = [],
+        context: PromptContext? = nil,
+        limit: Int = 40
+    ) -> [String] {
+        let ordered = CustomVocabulary.terms(customVocabulary)
+            + defaults
+            + (context?.candidates ?? [])
+            + (context?.appVocabulary ?? [])
+        var seen = Set<String>()
+        var result: [String] = []
+        for term in ordered {
+            let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty, seen.insert(t.lowercased()).inserted else { continue }
+            result.append(t)
+            if result.count >= limit { break }
+        }
+        return result
+    }
+
     /// Trailing slice of the preceding text, trimmed and capped — keeps the part
     /// closest to the caret (where the command/word being completed lives).
     static func cappedPreceding(_ text: String?) -> String? {
