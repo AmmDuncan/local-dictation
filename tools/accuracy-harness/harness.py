@@ -24,6 +24,7 @@ from corpus import CORPUS, PROMPT  # noqa: E402
 HOME = os.path.expanduser("~")
 MODEL = os.environ.get("LD_MODEL", f"{HOME}/models/ggml-base.en.bin")
 VAD = f"{HOME}/models/ggml-silero-v5.1.2.bin"
+VAD_V6 = f"{HOME}/models/ggml-silero-v6.2.0.bin"  # v6 no-regression A/B
 WHISPER = os.environ.get("LD_WHISPER", "/opt/homebrew/bin/whisper-cli")
 WORK = os.environ.get("LD_WORK", "/tmp/ld-accuracy")
 WAVS = os.path.join(WORK, "wavs")
@@ -35,6 +36,7 @@ DESIRED_VOICES = ["Samantha", "Alex", "Daniel", "Karen", "Moira", "Tessa"]
 # The app's current decode args (WhisperCLICommand.arguments + ResidentServerManager).
 _DECODE = ["-nt", "-bs", "1", "-bo", "1", "-l", "en"]
 _VAD = ["--vad", "-vm", VAD, "-vp", "200", "-vspd", "100"]
+_VAD_V6 = ["--vad", "-vm", VAD_V6, "-vp", "200", "-vspd", "100"]  # identical except the v6 model
 _PROMPT = ["--prompt", PROMPT]
 _BASE = _DECODE + _VAD + _PROMPT            # the app's current default (VAD on)
 _BASE_NOVAD = _DECODE + _PROMPT             # isolates flag effect on hallucination
@@ -42,6 +44,8 @@ _BASE_NOVAD = _DECODE + _PROMPT             # isolates flag effect on hallucinat
 CONFIGS = {
     # VAD-on family (production-realistic)
     "baseline": _BASE,
+    "vad_v6":   _DECODE + _VAD_V6 + _PROMPT,  # Silero v5.1.2 -> v6.2.0, all else identical
+
     "sns":      _BASE + ["-sns"],
     "nth70":    _BASE + ["-nth", "0.70"],
     "nth80":    _BASE + ["-nth", "0.80"],
