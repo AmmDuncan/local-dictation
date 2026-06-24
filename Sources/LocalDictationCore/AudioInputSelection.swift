@@ -11,27 +11,29 @@ public protocol AudioInputDeviceInfo {
 
 /// Pure input-device selection policy (no Core Audio calls, so it's testable).
 public enum AudioInputSelection {
-    /// Pick the input device to bind for a saved UID:
+    /// Pick the input device to record from, for a saved UID:
     /// - An explicitly chosen, still-present device is honored as-is — even if
     ///   it's Bluetooth (the user asked for it).
-    /// - Otherwise ("System Default", or a saved device that's gone) follow the
-    ///   OS default, EXCEPT when that default is Bluetooth and a built-in mic
-    ///   exists — then prefer built-in. A Bluetooth mic forces the device into
-    ///   low-quality HFP/SCO call mode and negotiates slowly/unreliably.
-    /// - `nil` means "no override" — the caller leaves the engine on its default.
+    /// - Otherwise ("System Default", or a saved device that's gone) return
+    ///   `nil` — record from the live OS default as-is, whatever it is
+    ///   (including Bluetooth). Auto-detecting a Bluetooth default to steer
+    ///   around it proved unreliable: AirPods' device identity and state shift
+    ///   between connects and A2DP/HFP modes, so the result was inconsistent.
+    ///   Following the OS default is predictable; the Settings copy warns that a
+    ///   Bluetooth mic records in lower-quality call mode.
+    ///
+    /// A non-nil result is the device the caller must actively bind. The engine
+    /// reliably captures only its *own default* input, so the caller makes this
+    /// device the system default for the recording (see `AudioFileRecorder`),
+    /// rather than forcing it via the audio unit's `CurrentDevice` override —
+    /// that override silently delivers no audio.
     public static func choose<Device: AudioInputDeviceInfo>(
         uid: String,
-        devices: [Device],
-        systemDefaultID: UInt32?
+        devices: [Device]
     ) -> UInt32? {
-        if !uid.isEmpty, let explicit = devices.first(where: { $0.uid == uid }) {
-            return explicit.deviceID
-        }
-        guard let defaultID = systemDefaultID,
-              let current = devices.first(where: { $0.deviceID == defaultID }),
-              current.isBluetooth else {
+        guard !uid.isEmpty, let explicit = devices.first(where: { $0.uid == uid }) else {
             return nil
         }
-        return devices.first(where: { $0.isBuiltIn })?.deviceID
+        return explicit.deviceID
     }
 }
