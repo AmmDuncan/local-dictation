@@ -68,11 +68,29 @@ enum AudioDevices {
         return deviceID
     }
 
-    /// Resolve the input device to bind, applying the built-in-over-Bluetooth
-    /// preference (see `AudioInputSelection`). Returns nil to mean "leave the
-    /// engine on its own default".
+    /// Resolve the input device to record from (see `AudioInputSelection`).
+    /// Returns nil for "System Default" — record from the live OS default as-is;
+    /// non-nil for an explicitly chosen device the caller must bind.
     static func resolveInputDeviceID(forUID uid: String) -> AudioDeviceID? {
-        AudioInputSelection.choose(uid: uid, devices: inputDevices(), systemDefaultID: defaultInputDeviceID())
+        AudioInputSelection.choose(uid: uid, devices: inputDevices())
+    }
+
+    /// Make `id` the system default input device. Returns true on success. Used
+    /// to bind a preferred non-default mic for a recording (the engine captures
+    /// only its own default), restored afterward.
+    @discardableResult
+    static func setDefaultInputDeviceID(_ id: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = id
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &deviceID
+        )
+        return status == noErr
     }
 
     private static func hasInputStreams(_ id: AudioDeviceID) -> Bool {

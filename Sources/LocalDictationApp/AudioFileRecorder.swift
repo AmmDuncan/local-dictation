@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import AudioToolbox
 import CoreAudio
 import Foundation
 import LocalDictationCore
@@ -58,6 +57,10 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
     /// start. Cold first-of-day warmup is normally well under this.
     private static let firstAudioTimeoutMillis = 1500
     private var converter: AVAudioConverter?
+    /// The system default input device we temporarily overrode for the current
+    /// recording (to bind a preferred non-default mic), restored on stop. nil
+    /// when we left the OS default untouched.
+    private var savedDefaultInputID: AudioDeviceID?
     private let lock = NSLock()
     private var samples: [Float] = []
     private var _isCapturing = false
@@ -97,6 +100,35 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         lock.lock(); _isCapturing = value; lock.unlock()
     }
 
+    deinit {
+        // Safety net: a recording torn down without a normal stop (cancel races,
+        // app quit) must not leave the user's input device switched.
+        restorePreferredInputDefault()
+    }
+
+    /// When an explicitly chosen input device isn't the current OS default, make
+    /// it the system default for this recording. The engine reliably captures
+    /// only its own default input, so this is how we bind a non-default mic;
+    /// restored by `restorePreferredInputDefault` on stop. No-op for "System
+    /// Default" (we follow the OS default) or when it's already the default.
+    private func applyPreferredInputDefault(forUID uid: String) {
+        guard let target = AudioDevices.resolveInputDeviceID(forUID: uid),
+              let current = AudioDevices.defaultInputDeviceID(),
+              target != current else {
+            savedDefaultInputID = nil
+            return
+        }
+        savedDefaultInputID = AudioDevices.setDefaultInputDeviceID(target) ? current : nil
+    }
+
+    /// Restore the system default input changed by `applyPreferredInputDefault`.
+    /// Idempotent — safe to call from every teardown path.
+    private func restorePreferredInputDefault() {
+        guard let saved = savedDefaultInputID else { return }
+        savedDefaultInputID = nil
+        AudioDevices.setDefaultInputDeviceID(saved)
+    }
+
     func startRecording() async throws {
         // Permission is requested once, up front, in AppModel.beginHold. Here we
         // only verify it (non-prompting) so a second system dialog never appears.
@@ -107,21 +139,31 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         clearSamples()
         resetFirstAudioState()
 
-        // Fresh engine each time so it binds to the current default input and
-        // follows route changes (e.g. headphones plugged in since last use).
-        engine = AVAudioEngine()
-
-        let input = engine.inputNode
+        // Bind an explicitly chosen input device by making it the system default
+        // for this recording (restored on stop). The engine reliably captures
+        // only its own *default* input, so forcing a device via the audio unit's
+        // CurrentDevice override silently delivers no audio. "System Default"
+        // changes nothing — we record from the live OS default as-is.
         let deviceUID = AppSettingsSnapshot.current.inputDeviceUID
-        if let deviceID = AudioDevices.resolveInputDeviceID(forUID: deviceUID), let unit = input.audioUnit {
-            var value = deviceID
-            AudioUnitSetProperty(
-                unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                &value, UInt32(MemoryLayout<AudioDeviceID>.size)
-            )
+        applyPreferredInputDefault(forUID: deviceUID)
+
+        // Fresh engine each time so it binds to the (now-preferred) default input
+        // and follows route changes (e.g. headphones plugged in since last use).
+        engine = AVAudioEngine()
+        let input = engine.inputNode
+
+        // Right after a device switch (an explicit non-default pick) the node's
+        // format can read momentarily invalid (0 Hz) while the route engages.
+        // Re-read briefly before giving up so the recording still starts cleanly.
+        var inputFormat = input.inputFormat(forBus: 0)
+        var settleTries = 0
+        while inputFormat.sampleRate <= 0 || inputFormat.channelCount == 0, settleTries < 15 {
+            try await Task.sleep(nanoseconds: 20_000_000)  // up to ~300ms
+            inputFormat = input.inputFormat(forBus: 0)
+            settleTries += 1
         }
-        let inputFormat = input.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            restorePreferredInputDefault()
             throw AudioRecordingError.couldNotStart
         }
         converter = AVAudioConverter(from: inputFormat, to: targetFormat)
@@ -136,6 +178,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            restorePreferredInputDefault()
             throw AudioRecordingError.couldNotStart
         }
         setCapturing(true)
@@ -211,6 +254,7 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         setCapturing(false)
+        restorePreferredInputDefault()
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-dictation-\(UUID().uuidString).wav")

@@ -16,7 +16,7 @@ struct AudioTab: View {
             } header: {
                 Text("Microphone")
             } footer: {
-                Text("“System Default” follows macOS but prefers your built-in mic over Bluetooth — a Bluetooth mic forces call mode (lower quality, slow to start). Pick a device above to override.")
+                Text("“System Default” follows your Mac’s current input device. A Bluetooth mic (e.g. AirPods) records in call mode — lower quality and slower to start — so for the clearest dictation, pick your Mac’s built-in mic above.")
             }
         }
         .formStyle(.grouped)
