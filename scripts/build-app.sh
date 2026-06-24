@@ -37,12 +37,12 @@ cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
 # Bundle the Silero VAD model so non-speech (silence/whistle/noise) is dropped
 # instead of hallucinated into words.
-VAD_SRC="$HOME/models/ggml-silero-v5.1.2.bin"
+VAD_SRC="$HOME/models/ggml-silero-v6.2.0.bin"
 if [[ ! -f "$VAD_SRC" ]]; then
-    curl -sL -o "$VAD_SRC" "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin" || true
+    curl -sL -o "$VAD_SRC" "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin" || true
 fi
 if [[ -f "$VAD_SRC" ]]; then
-    cp "$VAD_SRC" "$RESOURCES_DIR/ggml-silero-v5.1.2.bin"
+    cp "$VAD_SRC" "$RESOURCES_DIR/ggml-silero-v6.2.0.bin"
     echo "Bundled VAD model."
 else
     echo "WARNING: VAD model not found — app runs without VAD."

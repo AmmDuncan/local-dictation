@@ -18,11 +18,11 @@ enum WhisperLocator {
     /// The bundled Silero VAD model (else a copy in ~/models). Nil if unavailable
     /// — callers then run without VAD.
     static func resolvedVadModel() -> String? {
-        let bundled = Bundle.main.bundlePath + "/Contents/Resources/ggml-silero-v5.1.2.bin"
+        let bundled = Bundle.main.bundlePath + "/Contents/Resources/ggml-silero-v6.2.0.bin"
         if FileManager.default.fileExists(atPath: bundled) {
             return bundled
         }
-        let home = "~/models/ggml-silero-v5.1.2.bin".expandingTildeInPath
+        let home = "~/models/ggml-silero-v6.2.0.bin".expandingTildeInPath
         return FileManager.default.fileExists(atPath: home) ? home : nil
     }
 
