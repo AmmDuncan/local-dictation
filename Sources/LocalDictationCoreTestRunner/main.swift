@@ -100,8 +100,19 @@ struct LocalDictationCoreTestRunner {
         await suite.run("PolishOutcome.text returns the insertable text", testPolishOutcomeText)
         await suite.run("Polish outcome classification", testPolishOutcomeClassification)
         await suite.run("Workflow exposes the polish outcome", testWorkflowExposesPolishOutcome)
+        await suite.run("Correction apply composes for the clipboard", testCorrectionApply)
         suite.finish()
     }
+}
+
+private func testCorrectionApply() throws {
+    try expect(CorrectionApply.apply("Vue", for: "view", to: "build the view in view") == "build the Vue in view",
+               "replaces only the first occurrence")
+    let once = CorrectionApply.apply("Vercel", for: "versal", to: "deploy versal then post grass")
+    try expect(CorrectionApply.apply("Postgres", for: "post grass", to: once) == "deploy Vercel then Postgres",
+               "fixes compose onto the running text")
+    try expect(CorrectionApply.apply("X", for: "missing", to: "abc") == "abc", "absent target → unchanged")
+    try expect(CorrectionApply.apply("", for: "abc", to: "abc") == "abc", "empty replacement → unchanged")
 }
 
 private func testCustomVocabularyTerms() throws {

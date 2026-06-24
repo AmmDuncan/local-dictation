@@ -483,8 +483,7 @@ struct ReviewPanel: View {
     /// replacement; the clipboard ends holding the latest fully-corrected text.
     private func copyCorrection(expecting: String, replacement: String) {
         guard !replacement.isEmpty else { return }
-        var text = correctedText ?? record.inserted
-        if let r = text.range(of: expecting) { text.replaceSubrange(r, with: replacement) }
+        let text = CorrectionApply.apply(replacement, for: expecting, to: correctedText ?? record.inserted)
         correctedText = text
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
