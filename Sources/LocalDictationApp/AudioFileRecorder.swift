@@ -48,10 +48,15 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         channels: 1,
         interleaved: false
     )!
-    /// Keep capturing this long after a stop request so the last in-flight tap
-    /// buffer — usually the trailing syllable of the final word — flushes before
-    /// teardown. Small enough to stay within the push-to-talk latency budget.
-    private static let trailingCaptureMillis = 250
+    /// Keep capturing this long after a stop request so the last words land before
+    /// teardown. Tap buffers arrive every ~90ms, so 250ms (the old value) was only
+    /// ~2.7 buffers and `Task.sleep` jitter could clip it short — losing the last
+    /// 300–500ms, worst in toggle mode where users tap off the instant they finish.
+    /// 400ms gives ~4–5 buffers of margin, still inside the push-to-talk budget.
+    private static let trailingCaptureMillis = 400
+    /// Brief drain after teardown so an in-flight tap callback finishes appending to
+    /// `samples` before the snapshot reads it (the removeTap/snapshot race).
+    private static let teardownDrainMillis = 60
     /// Cap on how long `startRecording` waits for the mic to begin delivering
     /// audio before proceeding anyway, so a silent/broken input never hangs the
     /// start. Cold first-of-day warmup is normally well under this.
@@ -274,6 +279,10 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         engine.stop()
         setCapturing(false)
         restorePreferredInputDefault()
+
+        // Let any tap callback that was mid-flight at teardown finish appending
+        // before we read the buffer, so its samples aren't lost to the snapshot race.
+        try? await Task.sleep(for: .milliseconds(Self.teardownDrainMillis))
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-dictation-\(UUID().uuidString).wav")
