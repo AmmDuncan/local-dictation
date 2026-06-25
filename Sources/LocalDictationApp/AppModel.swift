@@ -43,8 +43,6 @@ final class AppModel {
     /// Floating review panel for the Door #1 hotkey, and the last dictation it shows.
     private let reviewPanelController = ReviewPanelController()
     private var lastRecord: CorrectionRecord?
-    /// AX window text shorter than this counts as "nothing usable" → OCR may fill in.
-    private static let minVisibleTextChars = 24
     /// A cached OCR result stays usable this long; refreshes are throttled to at
     /// most one per this gap so a burst of dictations doesn't re-capture each time.
     private static let ocrCacheTTL: TimeInterval = 30
@@ -614,20 +612,23 @@ final class AppModel {
         return prompt.isEmpty ? nil : prompt
     }
 
-    /// Opt-in OCR fallback for apps that expose no AX window text: merge a fresh
-    /// cached OCR for the same app into the context, and kick off a throttled async
+    /// Opt-in OCR: always merge a fresh cached OCR of the focused window into the
+    /// context (on TOP of any AX text), so on-screen terms bias recognition no
+    /// matter how much the app exposed to Accessibility. Kicks off a throttled async
     /// refresh for next time. Never blocks the mic — the slow Vision pass runs in
     /// the background and only the (instant) cache read happens inline.
     private func enrichWithOCR(_ context: DictationContext?, settings: AppSettingsSnapshot) -> DictationContext? {
         // Skip entirely without permission so we never spawn a no-op OCR task.
         guard settings.useScreenOCR, ScreenOCR.hasPermission,
               var context, let app = context.activeApplicationName else { return context }
-        // AX already exposed usable window text → no OCR needed.
         let axText = context.visibleText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard axText.count < Self.minVisibleTextChars else { return context }
 
+        // Merge cached OCR with the AX text so BOTH contribute on-screen candidates,
+        // regardless of how much (or little) AX exposed.
         if let cache = ocrCache, cache.app == app, Date().timeIntervalSince(cache.at) < Self.ocrCacheTTL {
-            context.visibleText = cache.text
+            context.visibleText = [axText, cache.text]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
         }
         refreshOCR(for: app)
         return context
