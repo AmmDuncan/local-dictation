@@ -35,18 +35,6 @@ enum AXSupport {
             || string(element, kAXSubroleAttribute as String) == "AXSecureTextField"
     }
 
-    /// The system-wide focused UI element, or nil. Captured at insert time for
-    /// experimental live re-insertion (so the target survives the review panel
-    /// taking key focus).
-    @MainActor
-    static func focusedElement() -> AXUIElement? {
-        var ref: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute as CFString, &ref
-        ) == .success, let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
-        return (ref as! AXUIElement)
-    }
-
     /// The element's selected-text range (caret = a zero-length range), or nil.
     @MainActor
     static func selectedRange(_ element: AXUIElement) -> NSRange? {
