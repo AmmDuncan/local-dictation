@@ -433,7 +433,7 @@ struct ReviewPanel: View {
     // MARK: apply
 
     /// Revert a built-in swap from its change chip's × button: suppress it for next
-    /// time, re-insert the original if live re-insertion is on, and drop the chip.
+    /// time, copy the original back over the swapped text, and drop the chip.
     private func revertChange(index: Int, edit: Edit) {
         if edit.source == .contextSub {
             // Persist the rejected swap so future context-sub passes skip this pair.
