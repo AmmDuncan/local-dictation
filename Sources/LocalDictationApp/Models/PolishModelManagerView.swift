@@ -23,6 +23,7 @@ private struct PolishModelRow: View {
     let model: PolishModel
     var store: PolishModelStore
     var onModelChanged: () -> Void
+    @State private var confirmingRemove = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -54,6 +55,14 @@ private struct PolishModelRow: View {
 
             control
         }
+        .confirmationDialog("Remove \(model.displayName)?", isPresented: $confirmingRemove, titleVisibility: .visible) {
+            Button("Remove (frees \(model.sizeLabel))", role: .destructive) {
+                store.remove(model)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Deletes the model file from disk. You can re-download it anytime.")
+        }
     }
 
     @ViewBuilder
@@ -79,12 +88,23 @@ private struct PolishModelRow: View {
                 .foregroundStyle(.secondary)
             }
         } else if store.isInstalled(model) {
-            Button("Use") {
-                store.select(model)
-                onModelChanged()
+            HStack(spacing: 8) {
+                Button("Use") {
+                    store.select(model)
+                    onModelChanged()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button(role: .destructive) {
+                    confirmingRemove = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .foregroundStyle(.secondary)
+                .help("Remove from disk to free \(model.sizeLabel)")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         } else {
             Button {
                 store.download(model)
