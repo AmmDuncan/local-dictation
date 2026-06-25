@@ -56,14 +56,26 @@ struct LearnTab: View {
             }
 
             Section {
-                ForEach(Array(userRules.enumerated()), id: \.offset) { _, rule in
-                    HStack {
-                        ruleLabel(from: rule.pattern, to: rule.replacement)
-                        Spacer()
-                        Button { deleteRule(rule) } label: { Image(systemName: "trash") }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
+                if !userRules.isEmpty {
+                    // Bounded + scrolls internally so a long list of taught rules can't
+                    // push the Add row and the built-in sections below it off-screen.
+                    // (Same treatment as the "Recent dictations" log above.)
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(userRules.enumerated()), id: \.offset) { index, rule in
+                                if index > 0 { Divider() }
+                                HStack {
+                                    ruleLabel(from: rule.pattern, to: rule.replacement)
+                                    Spacer()
+                                    Button { deleteRule(rule) } label: { Image(systemName: "trash") }
+                                        .buttonStyle(.borderless)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 6)
+                            }
+                        }
                     }
+                    .frame(maxHeight: 240)
                 }
                 HStack {
                     TextField("heard", text: $newFrom)
