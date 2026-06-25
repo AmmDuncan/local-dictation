@@ -29,6 +29,27 @@ cp "$PROJECT_DIR/.build/release/LocalDictation" "$MACOS_DIR/LocalDictation"
 # Resolve bundled frameworks (Sparkle, etc.) from inside the .app.
 install_name_tool -add_rpath @executable_path/../Frameworks "$MACOS_DIR/LocalDictation" 2>/dev/null || true
 
+# Repoint KeyboardShortcuts' Bundle.module fallback path. SwiftPM's generated
+# accessor looks for the resource bundle at (1) Bundle.main.bundleURL — the .app
+# ROOT, where a bundle can't be code-signed — or (2) this hardcoded build path,
+# absent on users' machines. So opening Settings (which builds a KeyboardShortcuts
+# Recorder) fatalErrored on every clean install; it only resolved via the dev
+# machine's .build. Rewrite (2) in the binary to the installed bundle location so
+# it resolves. Re-signed below. (Same byte-patch technique as the ggml path above.)
+python3 - "$MACOS_DIR/LocalDictation" \
+    "$PROJECT_DIR/.build/arm64-apple-macosx/release/KeyboardShortcuts_KeyboardShortcuts.bundle" \
+    "/Applications/$APP_NAME.app/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle" <<'PYEOF'
+import sys
+binpath, old, new = sys.argv[1], sys.argv[2].encode(), sys.argv[3].encode()
+data = open(binpath, 'rb').read()
+if old not in data:
+    sys.exit(f"FATAL: KeyboardShortcuts build path not found in binary:\n  {old.decode()}")
+if len(new) > len(old):
+    sys.exit(f"FATAL: install path too long ({len(new)} > {len(old)} bytes)")
+open(binpath, 'wb').write(data.replace(old, new + b'\x00' * (len(old) - len(new))))
+print(f"Repointed KeyboardShortcuts bundle path -> {new.decode()}")
+PYEOF
+
 # SwiftPM package resource bundles (e.g. KeyboardShortcuts' localized strings).
 # The generated `Bundle.module` accessor fatalErrors if its .bundle isn't beside
 # the app's resources — which crashed the Settings shortcut recorder on every
