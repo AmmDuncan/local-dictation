@@ -49,6 +49,18 @@ enum ModelCatalog {
             note: "Lighter"
         ),
         WhisperModel(
+            id: "large-v3",
+            displayName: "Large v3 (full)",
+            filename: "ggml-large-v3.bin",
+            sizeBytes: 3_095_033_483,
+            sha256: "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
+            url: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin")!,
+            language: "Multilingual",
+            speed: "Slow",
+            accuracy: "Best",
+            note: "Heavier; best on names/jargon"
+        ),
+        WhisperModel(
             id: "medium.en",
             displayName: "Medium",
             filename: "ggml-medium.en.bin",
