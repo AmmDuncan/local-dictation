@@ -33,8 +33,8 @@ struct AdvancedTab: View {
                 Toggle("Use context around your cursor", isOn: $useContextAwareness)
                     .help("Read the focused app and the text just before your cursor (Accessibility — no screen recording) to bias recognition and fix context-only mishearings, e.g. \"me\" → \"main\" when you dictate a branch after `git push origin`. On-device and transient; secure fields are never read.")
                 if useContextAwareness {
-                    Toggle("Read on-screen text (OCR) when needed", isOn: $useScreenOCR)
-                        .help("Fallback for apps that don't expose their text to Accessibility (some canvas / Chromium apps): screenshot the focused window and read it with on-device OCR. Needs Screen Recording permission. Off by default; the image is read and discarded, never stored.")
+                    Toggle("Read on-screen text (OCR) for context", isOn: $useScreenOCR)
+                        .help("Always screenshot the focused window and read it with on-device OCR, so what's on screen biases recognition toward what you're working on — not just a fallback when Accessibility text is missing. Needs Screen Recording permission. Off by default; the image is read and discarded, never stored.")
                         .onChange(of: useScreenOCR) { _, enabled in
                             if enabled { ScreenOCR.requestPermission() }
                         }
