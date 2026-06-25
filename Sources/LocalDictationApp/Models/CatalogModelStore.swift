@@ -70,6 +70,21 @@ class CatalogModelStore {
         UserDefaults.standard.set(path, forKey: activePathKey)
     }
 
+    /// Delete a model's file from disk to free space. Refuses the active model —
+    /// you can't delete what you're currently transcribing with; switch first.
+    /// The file stays re-downloadable from the catalog afterward.
+    func remove(_ model: any DownloadableModel) {
+        guard isInstalled(model), !isActive(model) else { return }
+        let url = directory.appendingPathComponent(model.filename)
+        do {
+            try FileManager.default.removeItem(at: url)
+            errors[model.id] = nil
+        } catch {
+            errors[model.id] = "Couldn't remove the model file. \(error.localizedDescription)"
+        }
+        refresh()
+    }
+
     func download(_ model: any DownloadableModel) {
         guard tasks[model.id] == nil else { return }
         errors[model.id] = nil
