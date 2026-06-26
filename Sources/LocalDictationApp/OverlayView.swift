@@ -263,9 +263,13 @@ struct OverlayView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button(acceptedCount == 0 ? "Apply" : "Apply \(acceptedCount)") { state.reviewApply?() }
+                // Stays enabled with nothing accepted: reverting every swap is a
+                // valid choice — Apply then pastes the original text (the confirmer's
+                // resolveWithCurrentToggles maps an empty set to .keepOriginal).
+                // Disabling it left the click dead, so nothing pasted after a full
+                // revert (the user expected Apply to type their reverted text).
+                Button(acceptedCount == 0 ? "Apply original" : "Apply \(acceptedCount)") { state.reviewApply?() }
                     .buttonStyle(SignalButtonStyle())
-                    .disabled(acceptedCount == 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
