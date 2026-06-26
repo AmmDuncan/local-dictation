@@ -46,7 +46,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Context candidate extraction (identifiers, proximity, dedup)", testContextCandidates)
         await suite.run("Visible-window text → candidates → prompt (P3)", testVisibleTextCandidates)
         await suite.run("Command mode: me->main in command context, left alone in prose", testCommandModeCorrections)
-        await suite.run("Recognition prompt folds in live context, weighted + capped", testContextPrompt)
+        await suite.run("Recognition prompt folds in discrete context terms only (no raw preceding text)", testContextPrompt)
         await suite.run("Workflow command mode: terminal git push me -> main", testWorkflowCommandModeInsertsMain)
         await suite.run("Workflow prose: chat 'push to me' left alone", testWorkflowProseLeavesMeAlone)
         await suite.run("Workflow command mode survives prose cleanup (caps/period)", testWorkflowCommandModeWithCleanup)
@@ -1148,12 +1148,11 @@ private func testContextPrompt() throws {
     )
     let p = RecognitionContext.prompt(vocabulary: "Nxabyte", defaults: [], history: [], context: context, maxChars: 600)
     try expect(p.hasPrefix("Nxabyte"), "user vocabulary leads")
-    try expect(p.contains("git push origin"), "preceding text folded in")
+    // Raw free-form preceding TEXT must NOT be folded into the whisper prompt — it
+    // triggers previous-text-conditioning cutoffs/repetition. Only discrete terms.
+    try expect(!p.contains("git push origin"), "raw preceding text is NOT folded into the prompt")
     try expect(p.contains("feat/login") && p.contains("UserStore.swift"), "candidates folded in")
     try expect(p.contains("main") && p.contains("branch"), "app-class vocabulary folded in")
-    let preceding = p.range(of: "git push origin")!.lowerBound
-    let appVocab = p.range(of: "branch")!.lowerBound
-    try expect(preceding < appVocab, "caret-proximate preceding text precedes app-class vocab")
 
     // No context → byte-identical to before (backward compatible).
     try expect(
