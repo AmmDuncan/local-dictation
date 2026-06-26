@@ -287,6 +287,9 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-dictation-\(UUID().uuidString).wav")
         try writeWav(to: url, samples: snapshotSamples(maxSeconds: nil))
+        if AppSettingsSnapshot.current.keepRecentRecordings {
+            RecentRecordings.archive(url)
+        }
         return url
     }
 
