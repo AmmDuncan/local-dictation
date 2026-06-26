@@ -39,6 +39,7 @@ final class ResidentServerManager {
             Config(
                 arguments: { model, port in
                     var args = ["-m", model, "--host", "127.0.0.1", "--port", String(port), "-nt", "-bs", "1"]
+                        + WhisperDecoding.maxContextArguments
                     if let vad = WhisperLocator.resolvedVadModel() {
                         args.append(contentsOf: ["--vad", "-vm", vad] + WhisperVAD.dictationTuningArguments)
                     }
