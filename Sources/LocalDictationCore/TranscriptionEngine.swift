@@ -331,6 +331,22 @@ public enum WhisperVAD {
     public static let dictationTuningArguments = ["-vp", "200", "-vspd", "100"]
 }
 
+/// Decoder tuning shared by the resident `whisper-server` launch and the
+/// `whisper-cli` fallback so both decode paths behave identically.
+public enum WhisperDecoding {
+    /// Cap whisper's text-context carryover. The default (`-1`, unbounded) feeds all
+    /// previously-decoded text back as conditioning, which on real dictation makes the
+    /// decoder SKIP the opening of an utterance — the early/middle audio is dropped from
+    /// the result even though it's fully present in the recording — and fall into
+    /// repetition loops (duplicated sentences). Both were reproduced from real captured
+    /// recordings and fixed by this cap, with the full bias prompt (vocabulary +
+    /// on-screen/OCR terms) still passed. `64` keeps useful recent context for accuracy
+    /// while breaking the runaway conditioning. (A prior accuracy sweep skipped `-mc 64`
+    /// over a ~0.003 WER cost, before it was known the unbounded default drops audio —
+    /// preventing data loss outweighs that.)
+    public static let maxContextArguments = ["-mc", "64"]
+}
+
 /// Builds the whisper-cli argument vector. Exposed for testing the beam-clamp
 /// and language-suppression rules.
 public enum WhisperCLICommand {
@@ -347,7 +363,7 @@ public enum WhisperCLICommand {
             "-nt",
             "-bs", String(max(1, configuration.beamSize)),
             "-bo", String(max(1, configuration.beamSize))
-        ]
+        ] + WhisperDecoding.maxContextArguments
 
         if let language = configuration.language?.trimmingCharacters(in: .whitespacesAndNewlines),
            !language.isEmpty,
