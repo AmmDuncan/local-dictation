@@ -102,6 +102,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Polish outcome classification", testPolishOutcomeClassification)
         await suite.run("Workflow exposes the polish outcome", testWorkflowExposesPolishOutcome)
         await suite.run("Correction apply composes for the clipboard", testCorrectionApply)
+        await suite.run("RecentRecordingsPrune.namesToPrune keeps newest, prunes oldest", testRecentRecordingsNamesToPrune)
         suite.finish()
     }
 }
@@ -1912,4 +1913,28 @@ private func testContextSubstituteFoldsIntoSegmentA() async throws {
     try expect(out == "deploy it to Vercel", "stage applies the swap")
     let folded = EditFold.combine([[], edits])
     try expect(folded.count == 1 && folded[0].source == .contextSub, "edits fold into segmentA space")
+}
+
+private func testRecentRecordingsNamesToPrune() throws {
+    // Below the cap → nothing to prune.
+    try expect(RecentRecordingsPrune.namesToPrune(existing: [], keepCount: 10) == [],
+               "empty list → no pruning")
+    try expect(RecentRecordingsPrune.namesToPrune(existing: ["a.wav", "b.wav"], keepCount: 10) == [],
+               "under cap → nothing pruned")
+    // Exactly at cap → nothing to prune.
+    let atCap = (0..<10).map { "rec-\($0).wav" }
+    try expect(RecentRecordingsPrune.namesToPrune(existing: atCap, keepCount: 10) == [],
+               "at cap → nothing pruned")
+    // One over the cap → drop the oldest (first in sort order).
+    let oneOver = (0..<11).map { "rec-\($0).wav" }
+    let pruned = RecentRecordingsPrune.namesToPrune(existing: oneOver, keepCount: 10)
+    try expect(pruned == ["rec-0.wav"], "one over cap → oldest entry pruned; got \(pruned)")
+    // Several over the cap → drop the oldest N.
+    let several = (0..<15).map { "rec-\($0).wav" }
+    let prunedSeveral = RecentRecordingsPrune.namesToPrune(existing: several, keepCount: 10)
+    try expect(prunedSeveral == (0..<5).map { "rec-\($0).wav" },
+               "five over cap → oldest five pruned; got \(prunedSeveral)")
+    // keepCount of 0 → everything pruned.
+    try expect(RecentRecordingsPrune.namesToPrune(existing: ["a.wav"], keepCount: 0) == ["a.wav"],
+               "keepCount 0 → all entries pruned")
 }

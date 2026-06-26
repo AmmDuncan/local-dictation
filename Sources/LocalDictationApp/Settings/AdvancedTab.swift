@@ -13,6 +13,7 @@ struct AdvancedTab: View {
     @Binding var useTextReplacements: Bool
     @Binding var textReplacements: String
     @AppStorage(AppSettingsKeys.crashReportingEnabled) private var crashReportingEnabled = false
+    @AppStorage(AppSettingsKeys.keepRecentRecordings) private var keepRecentRecordings = false
 
     var body: some View {
         Form {
@@ -68,6 +69,17 @@ struct AdvancedTab: View {
             Section {
                 Toggle("Send crash reports to the developer", isOn: $crashReportingEnabled)
                     .help("If LocalDictation crashes, send the macOS crash report (app version, your macOS version, and a technical backtrace — never your dictation text, audio, or transcripts) so it can be fixed. Uploaded on the next launch after a crash.")
+                Toggle("Keep recent recordings for troubleshooting", isOn: $keepRecentRecordings)
+                    .help("Save a copy of each dictation recording locally. Handy when a transcription seems cut short — you can replay the audio to see what was captured. The last 10 recordings are kept; older ones are deleted automatically after 7 days.")
+                if keepRecentRecordings {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Stores the last 10 recordings (auto-deleted after 7 days). Audio is never sent anywhere.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Reveal in Finder") { RecentRecordings.revealInFinder() }
+                            .buttonStyle(.bordered)
+                    }
+                }
             } header: {
                 Text("Diagnostics")
             } footer: {

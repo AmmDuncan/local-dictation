@@ -28,6 +28,7 @@ enum AppSettingsKeys {
     static let contextSubstitutionEnabled = "contextSubstitutionEnabled"
     static let contextSubstitutionCountdown = "contextSubstitutionCountdown"
     static let rejectedContextSubSwaps = "rejectedContextSubSwaps"
+    static let keepRecentRecordings = "keepRecentRecordings"
     // Polish visibility (runtime counters, not user-facing settings): the lifetime
     // tally shown in the readiness strip, and the self-quieting first-run proof
     // streak shown on the HUD (reset when the polish model changes).
@@ -77,6 +78,7 @@ struct AppSettingsSnapshot: Equatable {
     var contextSubstitutionEnabled: Bool
     var contextSubstitutionCountdown: Double
     var rejectedContextSubSwaps: String
+    var keepRecentRecordings: Bool
 
     var normalizedLanguage: String? {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -111,7 +113,8 @@ struct AppSettingsSnapshot: Equatable {
             logCorrections: defaults.object(forKey: AppSettingsKeys.logCorrections) as? Bool ?? Defaults.logCorrections,
             contextSubstitutionEnabled: defaults.object(forKey: AppSettingsKeys.contextSubstitutionEnabled) as? Bool ?? Defaults.contextSubstitutionEnabled,
             contextSubstitutionCountdown: defaults.object(forKey: AppSettingsKeys.contextSubstitutionCountdown) as? Double ?? Defaults.contextSubstitutionCountdown,
-            rejectedContextSubSwaps: defaults.string(forKey: AppSettingsKeys.rejectedContextSubSwaps) ?? Defaults.rejectedContextSubSwaps
+            rejectedContextSubSwaps: defaults.string(forKey: AppSettingsKeys.rejectedContextSubSwaps) ?? Defaults.rejectedContextSubSwaps,
+            keepRecentRecordings: defaults.object(forKey: AppSettingsKeys.keepRecentRecordings) as? Bool ?? Defaults.keepRecentRecordings
         )
     }
 
@@ -139,7 +142,8 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.logCorrections: Defaults.logCorrections,
             AppSettingsKeys.contextSubstitutionEnabled: Defaults.contextSubstitutionEnabled,
             AppSettingsKeys.contextSubstitutionCountdown: Defaults.contextSubstitutionCountdown,
-            AppSettingsKeys.rejectedContextSubSwaps: Defaults.rejectedContextSubSwaps
+            AppSettingsKeys.rejectedContextSubSwaps: Defaults.rejectedContextSubSwaps,
+            AppSettingsKeys.keepRecentRecordings: Defaults.keepRecentRecordings
         ])
         migrateLegacyLanguageDefault()
     }
@@ -196,5 +200,6 @@ struct AppSettingsSnapshot: Equatable {
         static let contextSubstitutionEnabled = false  // experimental: constrained LLM swap with countdown confirm
         static let contextSubstitutionCountdown: Double = 5.0
         static let rejectedContextSubSwaps = ""
+        static let keepRecentRecordings = false  // opt-in: stores last ~10 recordings for troubleshooting
     }
 }
