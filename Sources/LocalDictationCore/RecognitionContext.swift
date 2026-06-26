@@ -40,15 +40,20 @@ public enum RecognitionContext {
             remember(vocab, in: &seen)
         }
 
-        // Live context, caret-proximity weighted: the raw preceding text (closest
-        // to what's being said) leads, then identifier candidates, then the
-        // app-class vocabulary the canonical mishearings live in.
+        // Live context as DISCRETE TERMS only: identifier candidates extracted
+        // from the caret/visible text, then the app-class vocabulary the canonical
+        // mishearings live in.
+        //
+        // NOTE: the raw caret-preceding TEXT is deliberately NOT fed here. Whisper's
+        // initial_prompt is "previous-text conditioning": feeding it free-form
+        // running sentences makes the decoder skip content it thinks the prompt
+        // already covered (early-half cutoff) or fall into a repetition loop
+        // (duplicated sentences) — both reproduced from real recordings, both gone
+        // once the prompt carries only discrete terms. Identifier candidates are
+        // still extracted from that same caret/visible text by ContextBias, so the
+        // useful on-screen vocabulary survives; only the harmful running prose is
+        // dropped. See the whisper.cpp conditioning issues (#1017, #2286, #1507).
         if let context {
-            if let preceding = context.precedingText, !preceding.isEmpty, preceding.count + 1 <= budget {
-                parts.append(preceding)
-                budget -= preceding.count + 1
-                remember(preceding, in: &seen)
-            }
             budget = appendTerms(context.candidates, to: &parts, budget: budget, seen: &seen)
             budget = appendTerms(context.appVocabulary, to: &parts, budget: budget, seen: &seen)
         }
