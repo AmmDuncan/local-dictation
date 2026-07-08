@@ -48,12 +48,9 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         channels: 1,
         interleaved: false
     )!
-    /// Keep capturing this long after a stop request so the last words land before
-    /// teardown. Tap buffers arrive every ~90ms, so 250ms (the old value) was only
-    /// ~2.7 buffers and `Task.sleep` jitter could clip it short — losing the last
-    /// 300–500ms, worst in toggle mode where users tap off the instant they finish.
-    /// 400ms gives ~4–5 buffers of margin, still inside the push-to-talk budget.
-    private static let trailingCaptureMillis = 400
+    // Trailing capture after a stop request is governed by TailCapture (Core):
+    // up to 400ms so release-mid-word buffers land (~90ms per tap callback),
+    // ended early once the trailing audio is confirmed silent.
     /// Brief drain after teardown so an in-flight tap callback finishes appending to
     /// `samples` before the snapshot reads it (the removeTap/snapshot race).
     private static let teardownDrainMillis = 60
@@ -272,8 +269,9 @@ final class AudioFileRecorder: NSObject, AudioRecording, @unchecked Sendable {
         // Users release the hotkey the instant they finish the last word, so the
         // final tap buffer (the trailing syllable) is often still in flight. Keep
         // the tap live a beat longer before teardown so it lands in `samples`
-        // instead of being clipped by the immediate stop.
-        try? await Task.sleep(for: .milliseconds(Self.trailingCaptureMillis))
+        // instead of being clipped by the immediate stop — but end early once
+        // the trailing audio is confirmed silent (TailCapture policy).
+        await TailCapture.wait { [weak self] in self?.currentLevel ?? 0 }
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()

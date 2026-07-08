@@ -58,6 +58,10 @@ final class AppModel {
         Self.reapOrphanedHelpers()
         Self.migrateActivationShortcutIfNeeded()
 
+        // Load the prefilter's word list during idle startup, not the first
+        // dictation's hot path.
+        Task.detached(priority: .utility) { SubstitutionPrefilter.prewarm() }
+
         // Hold-to-talk: record while the key is held down.
         KeyboardShortcuts.onKeyDown(for: .holdToDictate) { [weak self] in
             Task { @MainActor in await self?.beginHold() }
@@ -539,6 +543,10 @@ final class AppModel {
         let contextSubstitute: (@Sendable (String) async -> (String, [Edit]))? = (ctxSubEnabled && !candidates.isEmpty)
             ? { @Sendable text in
                 ctxSubDebugLog("input=\(text.debugDescription)")
+                guard SubstitutionPrefilter.worthCalling(transcript: text, candidates: candidates) else {
+                    ctxSubDebugLog("prefilter: nothing candidate-like, skipping LLM")
+                    return (text, [])
+                }
                 guard let baseURL = await manager.awaitReady(timeout: 30) else { ctxSubDebugLog("llama NOT ready"); return (text, []) }
                 let engine = ContextSubstituteEngine(baseURL: baseURL, candidates: candidates)
                 let swaps = await engine.proposals(for: text).filter {

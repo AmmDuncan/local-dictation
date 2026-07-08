@@ -103,6 +103,10 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Workflow exposes the polish outcome", testWorkflowExposesPolishOutcome)
         await suite.run("Correction apply composes for the clipboard", testCorrectionApply)
         await suite.run("RecentRecordingsPrune.namesToPrune keeps newest, prunes oldest", testRecentRecordingsNamesToPrune)
+        await suite.run("SubstitutionPrefilter fires on every in-scope mishearing", testPrefilterRecall)
+        await suite.run("SubstitutionPrefilter skips candidate-free prose", testPrefilterSkips)
+        await suite.run("SubstitutionPrefilter edge cases", testPrefilterEdgeCases)
+        await suite.run("TailCapture stops early on silence, runs to cap on speech", testTailCapture)
         suite.finish()
     }
 }
@@ -1937,4 +1941,73 @@ private func testRecentRecordingsNamesToPrune() throws {
     // keepCount of 0 → everything pruned.
     try expect(RecentRecordingsPrune.namesToPrune(existing: ["a.wav"], keepCount: 0) == ["a.wav"],
                "keepCount 0 → all entries pruned")
+}
+
+// MARK: - SubstitutionPrefilter
+
+/// The 11 in-scope mishear cases from tools/accuracy-harness/substitution_ab.py
+/// (targets >= 5 squashed chars). Prefilter recall here must stay 100% — a miss
+/// means a fixable dictation never reaches the substitution LLM.
+private func testPrefilterRecall() throws {
+    let mishears: [(String, [String])] = [
+        ("deploy it to versal", ["Vercel", "Netlify", "Render"]),
+        ("open it in super base", ["Supabase", "Firebase", "Postgres"]),
+        ("let's use cuban eats", ["Kubernetes", "Docker", "Helm"]),
+        ("the cooper netties cluster", ["Kubernetes", "Nomad"]),
+        ("check the next js config", ["Next.js", "Nuxt", "Vite"]),
+        ("write it in type script", ["TypeScript", "JavaScript"]),
+        ("store it in post grass", ["Postgres", "SQLite", "Redis"]),
+        ("query the my sequel database", ["MySQL", "Postgres"]),
+        ("push it to git hub", ["GitHub", "GitLab"]),
+        ("use git lab for ci", ["GitLab", "GitHub", "CircleCI"]),
+        ("open the project in ex code", ["Xcode", "VSCode"]),
+    ]
+    for (transcript, candidates) in mishears {
+        try expect(SubstitutionPrefilter.worthCalling(transcript: transcript, candidates: candidates),
+                   "must fire on: \(transcript)")
+    }
+}
+
+private func testPrefilterSkips() throws {
+    let vocab = ["Vercel", "Supabase", "Kubernetes", "TypeScript", "Postgres", "GitHub",
+                 "Xcode", "Tailwind", "Docker", "Figma", "Notion"]
+    let prose = [
+        "Please remember to back up your files regularly.",
+        "Thanks so much for your help, I really appreciate it.",
+        "We need to schedule a follow up call next Tuesday.",
+        "I need to buy two items as well too",
+    ]
+    for text in prose {
+        try expect(!SubstitutionPrefilter.worthCalling(transcript: text, candidates: vocab),
+                   "must skip candidate-free prose: \(text)")
+    }
+}
+
+private func testPrefilterEdgeCases() throws {
+    // Short candidates are out of scope — deterministic layers own them.
+    try expect(!SubstitutionPrefilter.worthCalling(transcript: "push to me", candidates: ["main", "git"]),
+               "short candidates never trigger the prefilter")
+    // No candidates at all -> never call.
+    try expect(!SubstitutionPrefilter.worthCalling(transcript: "deploy it to versal", candidates: []),
+               "empty candidates -> skip")
+    // Exact presence of a long candidate still fires (a second occurrence may be misheard).
+    try expect(SubstitutionPrefilter.worthCalling(transcript: "open GitHub now", candidates: ["GitHub"]),
+               "exact candidate presence fires")
+    // Dictionary word near a candidate stays blocked below the override band.
+    try expect(!SubstitutionPrefilter.worthCalling(transcript: "the notion of fairness", candidates: ["Docker", "Vercel"]),
+               "real English word with weak similarity is dictionary-blocked")
+}
+
+private func testTailCapture() throws {
+    // Hard cap always stops, whatever the levels say.
+    try expect(TailCapture.shouldStop(elapsedMillis: 400, recentLevels: [0.9, 0.9]), "cap reached -> stop")
+    // Before the minimum, silence must not stop capture (mid-word buffer not landed).
+    try expect(!TailCapture.shouldStop(elapsedMillis: 50, recentLevels: [0.0]), "below minimum -> keep capturing")
+    // Sustained silence after the minimum stops early.
+    try expect(TailCapture.shouldStop(elapsedMillis: 150, recentLevels: [0.1, 0.05, 0.02]), "quiet tail -> early stop")
+    // Speech in the tail keeps the tap alive.
+    try expect(!TailCapture.shouldStop(elapsedMillis: 150, recentLevels: [0.1, 0.6]), "loud last poll -> keep capturing")
+    try expect(!TailCapture.shouldStop(elapsedMillis: 200, recentLevels: [0.6, 0.2]), "one quiet poll is not enough")
+    // Not enough samples yet -> keep capturing.
+    try expect(!TailCapture.shouldStop(elapsedMillis: 150, recentLevels: [0.1]), "single sample -> keep capturing")
 }
