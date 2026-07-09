@@ -1152,7 +1152,7 @@ private func testContextPrompt() throws {
         candidates: ["feat/login", "UserStore.swift"]
     )
     let p = RecognitionContext.prompt(vocabulary: "Nxabyte", defaults: [], history: [], context: context, maxChars: 600)
-    try expect(p.hasPrefix("Nxabyte"), "user vocabulary leads")
+    try expect(p.hasPrefix("Technical terms: Nxabyte"), "user vocabulary leads inside the framing")
     // Raw free-form preceding TEXT must NOT be folded into the whisper prompt — it
     // triggers previous-text-conditioning cutoffs/repetition. Only discrete terms.
     try expect(!p.contains("git push origin"), "raw preceding text is NOT folded into the prompt")
@@ -1161,8 +1161,13 @@ private func testContextPrompt() throws {
 
     // No context → byte-identical to before (backward compatible).
     try expect(
-        RecognitionContext.prompt(vocabulary: "X", history: [], context: nil) == "X",
-        "nil context → unchanged"
+        RecognitionContext.prompt(vocabulary: "X", history: [], context: nil) == "Technical terms: X.",
+        "nil context → framed vocabulary only"
+    )
+    // Nothing to bias toward → empty prompt, never a bare "Technical terms: ." header.
+    try expect(
+        RecognitionContext.prompt(vocabulary: "", history: [], context: nil).isEmpty,
+        "no terms → empty prompt, no dangling framing"
     )
     // Budget is respected even with context: an over-long preceding text is dropped
     // rather than blowing the cap.
@@ -1608,7 +1613,7 @@ private func testDefaultVocabularyMerge() throws {
 
     // No defaults → same as before (backward compatible).
     try expect(
-        RecognitionContext.prompt(vocabulary: "X", defaults: [], history: [], maxChars: 100) == "X",
+        RecognitionContext.prompt(vocabulary: "X", defaults: [], history: [], maxChars: 100) == "Technical terms: X.",
         "no defaults → just the vocabulary"
     )
     // Defaults work with empty user vocab (the out-of-the-box case).

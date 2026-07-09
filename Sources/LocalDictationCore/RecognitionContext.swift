@@ -16,6 +16,14 @@ public enum RecognitionContext {
     /// stays comfortably inside it while leaving room for the audio.
     public static let defaultMaxChars = 600
 
+    /// The terms are framed as "Technical terms: {…}." rather than a bare comma
+    /// dump: measured on the real-mic jargon set (prompt_framing_sweep,
+    /// 2026-07-08) the framing cut jargon/names WER 0.243 → 0.183 — nearly the
+    /// full large-v3 model-swap gain at zero cost — and clean prose improved.
+    /// The header + period are budgeted so `maxChars` still bounds the result.
+    static let framingPrefix = "Technical terms: "
+    static let framingSuffix = "."
+
     public static func prompt(
         vocabulary: String,
         defaults: [String] = [],
@@ -32,7 +40,7 @@ public enum RecognitionContext {
         // words already represented) keeps later, lower-priority parts from
         // repeating a term an earlier part already carries.
         var parts: [String] = []
-        var budget = maxChars
+        var budget = maxChars - framingPrefix.count - framingSuffix.count
         var seen = Set<String>()
         if !vocab.isEmpty {
             parts.append(vocab)
@@ -73,7 +81,9 @@ public enum RecognitionContext {
         }
         parts.append(contentsOf: kept.reversed())
 
-        return parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let joined = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !joined.isEmpty else { return "" }
+        return framingPrefix + joined + framingSuffix
     }
 
     /// Append the terms that fit `budget` and aren't already represented (every
