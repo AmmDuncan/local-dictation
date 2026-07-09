@@ -99,6 +99,7 @@ struct LocalDictationCoreTestRunner {
         await suite.run("substitution candidates dedupe case-insensitively", testSubstitutionCandidatesDedupe)
         await suite.run("substitution candidates include on-screen context", testSubstitutionCandidatesOnScreen)
         await suite.run("substitution candidates cap at limit, vocab leads", testSubstitutionCandidatesCap)
+        await suite.run("substitution candidates reserve on-screen floor", testSubstitutionCandidatesOnScreenFloor)
         await suite.run("PolishOutcome.text returns the insertable text", testPolishOutcomeText)
         await suite.run("Polish outcome classification", testPolishOutcomeClassification)
         await suite.run("Workflow exposes the polish outcome", testWorkflowExposesPolishOutcome)
@@ -161,10 +162,36 @@ private func testSubstitutionCandidatesOnScreen() throws {
 
 private func testSubstitutionCandidatesCap() throws {
     let ctx = ContextBias.PromptContext(candidates: (0..<50).map { "tok\($0)" })
-    let c = ContextBias.substitutionCandidates(customVocabulary: "Vercel", defaults: ["Kubernetes"], context: ctx, limit: 5)
+    let c = ContextBias.substitutionCandidates(
+        customVocabulary: "Vercel", defaults: ["Kubernetes"], context: ctx, limit: 5, onScreenFloor: 2
+    )
     try expect(c.count == 5, "capped at limit; got \(c.count)")
     try expect(c.first == "Vercel", "custom vocab leads so the cap preserves it; got \(c)")
     try expect(c.contains("Kubernetes"), "defaults precede on-screen tokens under the cap; got \(c)")
+    try expect(c.suffix(3) == ["tok0", "tok1", "tok2"], "on-screen fills the budget vocabulary leaves free; got \(c)")
+}
+
+private func testSubstitutionCandidatesOnScreenFloor() throws {
+    // A vocabulary big enough to fill the whole cap must still leave the
+    // reserved on-screen slots (the Ammiel case: 60 vocab terms, cap 40 -> no
+    // context ever reached the snap/LLM).
+    let vocab = (0..<100).map { "term\($0)" }.joined(separator: ", ")
+    let ctx = ContextBias.PromptContext(candidates: ["LangChain", "UserStore.swift"])
+    let c = ContextBias.substitutionCandidates(customVocabulary: vocab, defaults: [], context: ctx)
+    try expect(c.contains("LangChain") && c.contains("UserStore.swift"),
+               "on-screen candidates must survive an over-full vocabulary; got count \(c.count)")
+    try expect(c.count <= 80, "default cap is 80; got \(c.count)")
+    try expect(c.first == "term0", "vocabulary still leads; got \(c.first ?? "nil")")
+    // A term that is BOTH on screen and in the truncated vocabulary tail must
+    // still surface (dedup against the retained slice only, not the full list).
+    let tail = ContextBias.PromptContext(candidates: ["term90"] + (0..<10).map { "cand\($0)" })
+    let t = ContextBias.substitutionCandidates(customVocabulary: vocab, defaults: [], context: tail)
+    try expect(t.contains { $0 == "term90" }, "on-screen term hidden in the truncated vocab tail was dropped from both lists")
+    // When on-screen has fewer terms than the floor, vocabulary reclaims the rest.
+    let small = ContextBias.PromptContext(candidates: ["LangChain"])
+    let r = ContextBias.substitutionCandidates(customVocabulary: vocab, defaults: [], context: small)
+    try expect(r.count == 80 && r.contains("term78") && r.contains("LangChain"),
+               "unused floor slots go back to vocabulary; got count \(r.count)")
 }
 
 private func testHelperReaperPathMatching() throws {

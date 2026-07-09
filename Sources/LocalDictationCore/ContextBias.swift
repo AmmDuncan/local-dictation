@@ -116,28 +116,42 @@ public enum ContextBias {
     /// The allow-list context substitution may swap a misheard word toward: the
     /// user's curated vocabulary (custom terms first, then the built-in defaults
     /// when enabled), followed by the live on-screen context (extracted identifier
-    /// candidates, then app-class vocabulary). Vocabulary leads so the cap keeps
-    /// the curated, low-noise terms the feature is designed around — the A/B
-    /// harness that validated the swap safety feeds candidates that are exactly
-    /// these "on-screen / vocabulary" terms. Deduped case-insensitively (first
-    /// occurrence wins) and capped. Empty → substitution is skipped entirely.
+    /// candidates, then app-class vocabulary). Vocabulary leads, but `onScreenFloor`
+    /// slots are reserved for the on-screen sources so a full vocabulary can never
+    /// crowd out what the user is looking at right now. Unused floor slots go back
+    /// to vocabulary. Deduped case-insensitively (first occurrence wins) and
+    /// capped. Empty → substitution is skipped entirely.
     public static func substitutionCandidates(
         customVocabulary: String,
         defaults: [String] = [],
         context: PromptContext? = nil,
-        limit: Int = 40
+        limit: Int = 80,
+        onScreenFloor: Int = 16
     ) -> [String] {
-        let ordered = CustomVocabulary.terms(customVocabulary)
-            + defaults
-            + (context?.candidates ?? [])
-            + (context?.appVocabulary ?? [])
-        var seen = Set<String>()
-        var result: [String] = []
-        for term in ordered {
-            let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty, seen.insert(t.lowercased()).inserted else { continue }
-            result.append(t)
-            if result.count >= limit { break }
+        func dedup(_ terms: [String]) -> [String] {
+            var seen = Set<String>()
+            return terms.compactMap { term in
+                let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty, seen.insert(t.lowercased()).inserted else { return nil }
+                return t
+            }
+        }
+        let vocabulary = dedup(CustomVocabulary.terms(customVocabulary) + defaults)
+        let onScreen = dedup((context?.candidates ?? []) + (context?.appVocabulary ?? []))
+        let reserved = min(onScreenFloor, onScreen.count, limit)
+
+        var result = Array(vocabulary.prefix(limit - reserved))
+        var kept = Set(result.map { $0.lowercased() })
+        // On-screen terms dedup against the RETAINED vocab slice only — a term
+        // hidden in the truncated tail must still surface here.
+        for term in onScreen where result.count < limit {
+            guard kept.insert(term.lowercased()).inserted else { continue }
+            result.append(term)
+        }
+        // Unused floor slots go back to the vocabulary tail.
+        for term in vocabulary.dropFirst(limit - reserved) where result.count < limit {
+            guard kept.insert(term.lowercased()).inserted else { continue }
+            result.append(term)
         }
         return result
     }
