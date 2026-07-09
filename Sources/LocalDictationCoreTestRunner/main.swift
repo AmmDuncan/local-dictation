@@ -4,6 +4,7 @@ import LocalDictationCore
 @main
 struct LocalDictationCoreTestRunner {
     static func main() async {
+        runPhoneticParityIfRequested()
         var suite = TestSuite()
         await suite.run("Whisper parser prefers sidecar transcript", testWhisperParserPrefersSidecarTranscript)
         await suite.run("Whisper parser removes timestamps", testWhisperParserRemovesTimestamps)
@@ -107,6 +108,11 @@ struct LocalDictationCoreTestRunner {
         await suite.run("SubstitutionPrefilter skips candidate-free prose", testPrefilterSkips)
         await suite.run("SubstitutionPrefilter edge cases", testPrefilterEdgeCases)
         await suite.run("TailCapture stops early on silence, runs to cap on speech", testTailCapture)
+        await suite.run("Metaphone.key matches the jellyfish reference fixture", testMetaphoneFixture)
+        await suite.run("PhoneticSnap fixes non-word mangles toward vocabulary", testPhoneticSnapFixes)
+        await suite.run("PhoneticSnap never touches real words or present terms", testPhoneticSnapGuards)
+        await suite.run("PhoneticSnap preserves punctuation and tracks edits", testPhoneticSnapEditsAndPunctuation)
+        await suite.run("Workflow preCorrect chain carries a phonetic snap to insertion", testPhoneticSnapThroughWorkflow)
         suite.finish()
     }
 }
@@ -2015,4 +2021,434 @@ private func testTailCapture() throws {
     try expect(!TailCapture.shouldStop(elapsedMillis: 200, recentLevels: [0.6, 0.2]), "one quiet poll is not enough")
     // Not enough samples yet -> keep capturing.
     try expect(!TailCapture.shouldStop(elapsedMillis: 150, recentLevels: [0.1]), "single sample -> keep capturing")
+}
+
+// Mirrors AppModel.makeWorkflow's deterministic preCorrect chain (mishearing ->
+// command -> phonetic snap) so a wiring regression there has a failing shape here.
+private func testPhoneticSnapThroughWorkflow() async throws {
+    let vocabulary = ContextBias.substitutionCandidates(customVocabulary: "", defaults: DefaultVocabulary.terms)
+    let inserter = StubInserter()
+    let workflow = DictationWorkflow(
+        recorder: StubRecorder(),
+        transcriber: StubTranscriber(transcript: "ask clot to deploy the superbase schema"),
+        inserter: inserter,
+        preCorrect: { text in
+            var result = text
+            var passes: [[Edit]] = []
+            let (misheard, mishearEdits) = MishearingCorrections.applyTracked(to: result)
+            result = misheard
+            passes.append(mishearEdits)
+            let (snapped, snapEdits) = PhoneticSnapCorrections.applyTracked(to: result, vocabulary: vocabulary)
+            result = snapped
+            passes.append(snapEdits)
+            return (result, EditFold.combine(passes))
+        }
+    )
+    try await workflow.beginRecording()
+    try await workflow.finishRecording()
+    try expect(
+        inserter.insertedText == "ask Claude to deploy the Supabase schema",
+        "chained corrections should reach insertion, got \(inserter.insertedText ?? "nil")"
+    )
+}
+
+private func testMetaphoneFixture() throws {
+    var mismatches: [String] = []
+    for (input, expected) in metaphoneFixture where Metaphone.key(input) != expected {
+        mismatches.append("\(input): got \(Metaphone.key(input).debugDescription), want \(expected.debugDescription)")
+    }
+    try expect(mismatches.isEmpty, "\(mismatches.count)/\(metaphoneFixture.count) mismatches, e.g. \(mismatches.prefix(5).joined(separator: "; "))")
+}
+
+private let snapVocabulary = ["Supabase", "LangChain", "OpenAI", "Xcode", "GitHub", "Chollet", "Vercel", "Kubernetes", "Vue"]
+
+private func testPhoneticSnapFixes() throws {
+    // The measured win classes: single non-word mangles and multi-word mangles.
+    let cases: [(String, String)] = [
+        ("Deploying the app with the superbees database", "Deploying the app with the Supabase database"),
+        ("Validate the payload inside the LungChain agent", "Validate the payload inside the LangChain agent"),
+        ("Francois Choulet created Keras", "Francois Chollet created Keras"),
+    ]
+    for (input, want) in cases {
+        let got = PhoneticSnapCorrections.apply(to: input, vocabulary: snapVocabulary)
+        try expect(got == want, "\(input.debugDescription) -> \(got.debugDescription), want \(want.debugDescription)")
+    }
+}
+
+private func testPhoneticSnapGuards() throws {
+    let untouched = [
+        // "open" is a real English word — the dictionary gate must block the
+        // measured open->OpenAI false swap.
+        "Push the branch to GitHub and open the project in Xcode.",
+        // The target term already appears: never double-place it.
+        "the LangChain LungChain demo",
+        // Plain prose with nothing candidate-like.
+        "So I was thinking we grab lunch after the meeting today.",
+        // A multi-word window of real English words is prose, not a mishearing
+        // ("long chain" must not become LangChain) — whatever whitespace joins them.
+        "it was a long chain of events",
+        "it was a long\u{00A0}chain of events",
+        // A window that IS a vocabulary term stays put.
+        "deploy it on Kubernetes now",
+    ]
+    for input in untouched {
+        let got = PhoneticSnapCorrections.apply(to: input, vocabulary: snapVocabulary)
+        try expect(got == input, "\(input.debugDescription) changed to \(got.debugDescription)")
+    }
+    // Terms shorter than 4 alphanumerics are out of scope ("view" must not snap to Vue).
+    let short = PhoneticSnapCorrections.apply(to: "build the settings view today", vocabulary: snapVocabulary)
+    try expect(short == "build the settings view today", "short-term guard: \(short.debugDescription)")
+    // Empty vocabulary is a no-op.
+    try expect(PhoneticSnapCorrections.apply(to: "the superbees database", vocabulary: []) == "the superbees database", "empty vocabulary must no-op")
+}
+
+private func testPhoneticSnapEditsAndPunctuation() throws {
+    // Trailing punctuation on the snapped window survives the swap.
+    let (comma, commaEdits) = PhoneticSnapCorrections.applyTracked(
+        to: "deploy to superbees, then test", vocabulary: snapVocabulary
+    )
+    try expect(comma == "deploy to Supabase, then test", "comma preserved: \(comma.debugDescription)")
+    try expect(commaEdits.count == 1, "one edit, got \(commaEdits.count)")
+    if let edit = commaEdits.first {
+        try expect(edit.from == "superbees" && edit.to == "Supabase" && edit.source == .mishearing,
+                   "edit content: \(edit.from) -> \(edit.to) (\(edit.source))")
+        try expect((comma as NSString).substring(with: edit.range) == "Supabase",
+                   "edit range must cover the replacement in the output")
+    }
+    let (period, _) = PhoneticSnapCorrections.applyTracked(
+        to: "Validate it inside the LungChain.", vocabulary: snapVocabulary
+    )
+    try expect(period == "Validate it inside the LangChain.", "period preserved: \(period.debugDescription)")
+    // A suppressed swap (review-panel revert) never fires again.
+    let suppressed = RuleDerivation.suppressionIdentity(source: .mishearing, from: "superbees", to: "Supabase")!
+    let (kept, keptEdits) = PhoneticSnapCorrections.applyTracked(
+        to: "deploy to superbees now", vocabulary: snapVocabulary, suppressing: [suppressed]
+    )
+    try expect(kept == "deploy to superbees now" && keptEdits.isEmpty, "suppressed swap fired: \(kept.debugDescription)")
+}
+// GENERATED jellyfish (Rust) metaphone reference outputs (gen_metaphone_swift.py).
+private let metaphoneFixture: [(String, String)] = [
+    ("Actiniaria", "AKTNR"),
+    ("Antheraea", "AN0R"),
+    ("Anthropic", "AN0RPK"),
+    ("Arriet", "ART"),
+    ("Bobadilism", "BBTLSM"),
+    ("Busaos", "BSS"),
+    ("CUDA", "KT"),
+    ("Calimeris", "KLMRS"),
+    ("Caribbee", "KRB"),
+    ("Ceratopteris", "SRTPTRS"),
+    ("ChatGPT", "XTKPT"),
+    ("Chollet", "XLT"),
+    ("Claude", "KLT"),
+    ("Clitocybe", "KLTSB"),
+    ("Dedanite", "TTNT"),
+    ("Docker", "TKR"),
+    ("FFmpeg", "FMPK"),
+    ("Figma", "FKM"),
+    ("Gemini", "JMN"),
+    ("GitHub", "J0B"),
+    ("Grafana", "KRFN"),
+    ("GraphQL", "KRFKL"),
+    ("Guido", "KT"),
+    ("JavaScript", "JFSKRPT"),
+    ("Kafka", "KFK"),
+    ("Karpathy", "KRP0"),
+    ("Keras", "KRS"),
+    ("Kubernetes", "KBRNTS"),
+    ("LangChain", "LNKXN"),
+    ("Leninite", "LNNT"),
+    ("Magian", "MJN"),
+    ("Next.js", "NKSTJS"),
+    ("Node.js", "NTJS"),
+    ("Notion", "NXN"),
+    ("OpenAI", "OPN"),
+    ("Parakeet", "PRKT"),
+    ("Paszke", "PSSK"),
+    ("Peronospora", "PRNSPR"),
+    ("Pinecone", "PNKN"),
+    ("Postgres", "PSTKRS"),
+    ("Prionopinae", "PRNPN"),
+    ("Prometheus", "PRM0S"),
+    ("PyTorch", "PTRX"),
+    ("Pydantic", "PTNTK"),
+    ("Python", "P0N"),
+    ("Pytorch", "PTRX"),
+    ("Qwen", "KWN"),
+    ("RabbitMQ", "RBTMK"),
+    ("React", "RKT"),
+    ("Redis", "RTS"),
+    ("Romance", "RMNS"),
+    ("Scolia", "SKL"),
+    ("Shiraz", "XRS"),
+    ("Slack", "SLK"),
+    ("Supabase", "SPBS"),
+    ("Swift", "SWFT"),
+    ("SwiftUI", "SWFT"),
+    ("Sybil", "SBL"),
+    ("Tailwind", "TLWNT"),
+    ("Tantalic", "TNTLK"),
+    ("Terraform", "TRFRM"),
+    ("Torvalds", "TRFLTS"),
+    ("TypeScript", "TPSKRPT"),
+    ("Vercel", "FRSL"),
+    ("Wasm", "WSM"),
+    ("Weaviate", "WFT"),
+    ("WebAssembly", "WBSMBL"),
+    ("Winnie", "WN"),
+    ("Xcode", "SKT"),
+    ("accept", "AKSPT"),
+    ("aegis", "EJS"),
+    ("ai", "A"),
+    ("amyloplastic", "AMLPLSTK"),
+    ("anastate", "ANSTT"),
+    ("annale", "ANL"),
+    ("anthracemia", "AN0RSM"),
+    ("askingly", "ASKNKL"),
+    ("assuetude", "ASTT"),
+    ("away", "AW"),
+    ("backfriend", "BKFRNT"),
+    ("badge", "BJ"),
+    ("beglerbeglic", "BKLRBKLK"),
+    ("berthed", "BR0T"),
+    ("bewinged", "BWNJT"),
+    ("blot", "BLT"),
+    ("box", "BKS"),
+    ("branch", "BRNX"),
+    ("brew", "BR"),
+    ("bribemonger", "BRBMNJR"),
+    ("bulbule", "BLBL"),
+    ("buzzer", "BSR"),
+    ("cache", "KX"),
+    ("capuchin", "KPXN"),
+    ("cardiotoxic", "KRTTKSK"),
+    ("casio", "KX"),
+    ("chalcanthite", "XLKN0T"),
+    ("check out", "XK OT"),
+    ("checkout", "XKT"),
+    ("choulet", "XLT"),
+    ("chrome", "XRM"),
+    ("clean-off", "KLNF"),
+    ("climb", "KLM"),
+    ("combine", "KMBN"),
+    ("commit", "KMT"),
+    ("contactual", "KNTKTL"),
+    ("converting", "KNFRTNK"),
+    ("convictional", "KNFKXNL"),
+    ("cooper netties", "KPR NTS"),
+    ("corrode", "KRT"),
+    ("cuda kernel", "KT KRNL"),
+    ("culteranismo", "KLTRNSM"),
+    ("cycadlike", "SKTLK"),
+    ("darky", "TRK"),
+    ("dasymeter", "TSMTR"),
+    ("declaim", "TKLM"),
+    ("detubation", "TTBXN"),
+    ("dyke", "TK"),
+    ("echo", "EX"),
+    ("emanative", "EMNTF"),
+    ("equoid", "EKT"),
+    ("erythrophage", "ER0RFJ"),
+    ("ethics", "E0KS"),
+    ("everything", "EFR0NK"),
+    ("evreen", "EFRN"),
+    ("exit", "EKST"),
+    ("explanatory", "EKSPLNTR"),
+    ("extended", "EKSTNTT"),
+    ("extollingly", "EKSTLNKL"),
+    ("eyeglass", "EYKLS"),
+    ("fascinatress", "FSSNTRS"),
+    ("figurante", "FKRNT"),
+    ("finish", "FNX"),
+    ("flocculent", "FLKKLNT"),
+    ("floodcock", "FLTKK"),
+    ("fute", "FT"),
+    ("futwa", "FTW"),
+    ("gRPC", "KRPK"),
+    ("galvanology", "KLFNLJ"),
+    ("ghost", "KHST"),
+    ("ginks", "JNKS"),
+    ("git", "JT"),
+    ("git hub", "JT HB"),
+    ("gnome", "NM"),
+    ("graycoat", "KRKT"),
+    ("groschen", "KRSXN"),
+    ("groved", "KRFT"),
+    ("guna", "KN"),
+    ("gutweed", "KTWT"),
+    ("gym", "JM"),
+    ("hairup", "HRP"),
+    ("heathbird", "H0BRT"),
+    ("hedge", "HJ"),
+    ("hedgehog", "HJHK"),
+    ("hemihydrate", "HMTRT"),
+    ("hemiolia", "HML"),
+    ("hemitremor", "HMTRMR"),
+    ("houbara", "HBR"),
+    ("hydroscope", "HTRSKP"),
+    ("ingress", "INKRS"),
+    ("intestacy", "INTSTS"),
+    ("introductor", "INTRTKTR"),
+    ("jigman", "JKMN"),
+    ("judge", "JJ"),
+    ("knowledge", "NLJ"),
+    ("kubectl", "KBKTL"),
+    ("lactagogue", "LKTKK"),
+    ("lamb", "LM"),
+    ("lasque", "LSK"),
+    ("long chain", "LNK XN"),
+    ("lucky", "LK"),
+    ("lumbang", "LMBNK"),
+    ("lungchain", "LNKXN"),
+    ("main", "MN"),
+    ("mammonish", "MMNX"),
+    ("mandatee", "MNTT"),
+    ("marmoreal", "MRMRL"),
+    ("match", "MX"),
+    ("melanopathia", "MLNP0"),
+    ("merge", "MRJ"),
+    ("miler", "MLR"),
+    ("mimetite", "MMTT"),
+    ("miniator", "MNTR"),
+    ("ministryship", "MNSTRXP"),
+    ("mutuary", "MTR"),
+    ("nanoGPT", "NNKPT"),
+    ("narcomedusan", "NRKMTSN"),
+    ("nation", "NXN"),
+    ("necessitate", "NSSTT"),
+    ("next js", "NKST JS"),
+    ("nginx", "NJNKS"),
+    ("night", "NT"),
+    ("npm", "NPM"),
+    ("occupancy", "OKKPNS"),
+    ("occur", "OKKR"),
+    ("ocean", "OSN"),
+    ("ogdoas", "OKTS"),
+    ("oillike", "OLK"),
+    ("oleoduct", "OLTKT"),
+    ("open", "OPN"),
+    ("openai", "OPN"),
+    ("origin", "ORJN"),
+    ("ornate", "ORNT"),
+    ("paramatta", "PRMT"),
+    ("paszk", "PSSK"),
+    ("patinous", "PTNS"),
+    ("patio", "PX"),
+    ("penultima", "PNLTM"),
+    ("percentile", "PRSNTL"),
+    ("pineconen", "PNKNN"),
+    ("pneumonia", "NMN"),
+    ("pnpm", "NPM"),
+    ("prefragrance", "PRFRKRNS"),
+    ("protoplastic", "PRTPLSTK"),
+    ("provalds", "PRFLTS"),
+    ("psalm", "PSLM"),
+    ("pulldown", "PLTN"),
+    ("qda", "KT"),
+    ("quick", "KK"),
+    ("rebase", "RBS"),
+    ("reptatorial", "RPTTRL"),
+    ("resterilize", "RSTRLS"),
+    ("review", "RF"),
+    ("ronquil", "RNKL"),
+    ("rough", "RKH"),
+    ("salableness", "SLBLNS"),
+    ("sauterelle", "STRL"),
+    ("school", "SXL"),
+    ("science", "SSNS"),
+    ("scombriform", "SKMBRFRM"),
+    ("selihoth", "SLH0"),
+    ("she", "X"),
+    ("sign", "S"),
+    ("signal", "SKNL"),
+    ("sirup", "SRP"),
+    ("skepful", "SKPFL"),
+    ("smother", "SM0R"),
+    ("snobbish", "SNBX"),
+    ("social", "SXL"),
+    ("sporocarp", "SPRKRP"),
+    ("square", "SKR"),
+    ("stibonium", "STBNM"),
+    ("subpavement", "SBPFMNT"),
+    ("success", "SKSS"),
+    ("super base", "SPR BS"),
+    ("superbees", "SPRBS"),
+    ("swatter", "SWTR"),
+    ("taraph", "TRF"),
+    ("telechemic", "TLXMK"),
+    ("telfer", "TLFR"),
+    ("terrorsome", "TRRSM"),
+    ("thiourethan", "0R0N"),
+    ("this", "0S"),
+    ("though", "0KH"),
+    ("thumb", "0M"),
+    ("thumbstring", "0MBSTRNK"),
+    ("tonguiness", "TNKNS"),
+    ("trappous", "TRPS"),
+    ("tumefacient", "TMFSNT"),
+    ("unalmsed", "UNLMST"),
+    ("uncasemated", "UNKSMTT"),
+    ("uncudgelled", "UNKJLT"),
+    ("undenounced", "UNTNNST"),
+    ("undirected", "UNTRKTT"),
+    ("uninvitedly", "UNNFTTL"),
+    ("unmental", "UNMNTL"),
+    ("unmold", "UNMLT"),
+    ("unpillared", "UNPLRT"),
+    ("untrowed", "UNTRWT"),
+    ("unwhite", "UNHT"),
+    ("versal", "FRSL"),
+    ("vesicule", "FSKL"),
+    ("vessel", "FSL"),
+    ("viand", "FNT"),
+    ("vision", "FXN"),
+    ("vue", "F"),
+    ("wandsman", "WNTSMN"),
+    ("weaviate", "WFT"),
+    ("wetched", "WXT"),
+    ("whale", "WL"),
+    ("what", "WT"),
+    ("whereover", "WRFR"),
+    ("woodcracker", "WTKRKR"),
+    ("wrangler", "RNKLR"),
+    ("wrist", "RST"),
+    ("x", "S"),
+    ("xhosa", "XHS"),
+    ("xylophone", "SLFN"),
+    ("yes", "YS"),
+    ("zebra", "SBR"),
+    ("zootechnic", "STXNK"),
+]
+
+// Conformance harness vs the measured Python prototype (tools/accuracy-harness/
+// phonetic_snap_ab.py). Generate the reference with `--parity <out.json>`, then
+// LD_PHONO_PARITY=<out.json> swift run LocalDictationCoreTestRunner
+private struct ParityFile: Codable {
+    struct Row: Codable { let set: String; let raw: String; let fixed: String }
+    let mic_vocab: [String]
+    let jargon_vocab: [String]
+    let rows: [Row]
+}
+
+func runPhoneticParityIfRequested() {
+    guard let path = ProcessInfo.processInfo.environment["LD_PHONO_PARITY"],
+          let data = FileManager.default.contents(atPath: path),
+          let file = try? JSONDecoder().decode(ParityFile.self, from: data) else { return }
+    var mismatches = 0
+    for row in file.rows {
+        let vocab = row.set == "tts_jargon" ? file.jargon_vocab : file.mic_vocab
+        let got = PhoneticSnapCorrections.apply(to: row.raw, vocabulary: vocab)
+        // Python drops window punctuation; Swift deliberately keeps it. Compare
+        // modulo punctuation-free tokens.
+        func norm(_ s: String) -> String {
+            s.lowercased().split(separator: " ").map { $0.filter { $0.isLetter || $0.isNumber } }
+                .filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        if norm(got) != norm(row.fixed) {
+            mismatches += 1
+            print("PARITY MISMATCH (\(row.set))\n  raw:    \(row.raw)\n  python: \(row.fixed)\n  swift:  \(got)")
+        }
+    }
+    print("parity: \(file.rows.count - mismatches)/\(file.rows.count) match")
+    exit(mismatches == 0 ? 0 : 1)
 }

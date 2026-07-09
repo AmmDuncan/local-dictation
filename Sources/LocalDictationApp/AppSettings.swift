@@ -26,6 +26,7 @@ enum AppSettingsKeys {
     static let crashReportingEnabled = "crashReportingEnabled"
     static let crashReportConsentAsked = "crashReportConsentAsked"
     static let contextSubstitutionEnabled = "contextSubstitutionEnabled"
+    static let phoneticSnapEnabled = "phoneticSnapEnabled"
     static let contextSubstitutionCountdown = "contextSubstitutionCountdown"
     static let rejectedContextSubSwaps = "rejectedContextSubSwaps"
     static let keepRecentRecordings = "keepRecentRecordings"
@@ -76,6 +77,7 @@ struct AppSettingsSnapshot: Equatable {
     var rejectedBuiltInSwaps: String
     var logCorrections: Bool
     var contextSubstitutionEnabled: Bool
+    var phoneticSnapEnabled: Bool
     var contextSubstitutionCountdown: Double
     var rejectedContextSubSwaps: String
     var keepRecentRecordings: Bool
@@ -112,6 +114,7 @@ struct AppSettingsSnapshot: Equatable {
             rejectedBuiltInSwaps: defaults.string(forKey: AppSettingsKeys.rejectedBuiltInSwaps) ?? Defaults.rejectedBuiltInSwaps,
             logCorrections: defaults.object(forKey: AppSettingsKeys.logCorrections) as? Bool ?? Defaults.logCorrections,
             contextSubstitutionEnabled: defaults.object(forKey: AppSettingsKeys.contextSubstitutionEnabled) as? Bool ?? Defaults.contextSubstitutionEnabled,
+            phoneticSnapEnabled: defaults.object(forKey: AppSettingsKeys.phoneticSnapEnabled) as? Bool ?? Defaults.phoneticSnapEnabled,
             contextSubstitutionCountdown: defaults.object(forKey: AppSettingsKeys.contextSubstitutionCountdown) as? Double ?? Defaults.contextSubstitutionCountdown,
             rejectedContextSubSwaps: defaults.string(forKey: AppSettingsKeys.rejectedContextSubSwaps) ?? Defaults.rejectedContextSubSwaps,
             keepRecentRecordings: defaults.object(forKey: AppSettingsKeys.keepRecentRecordings) as? Bool ?? Defaults.keepRecentRecordings
@@ -141,6 +144,7 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.rejectedBuiltInSwaps: Defaults.rejectedBuiltInSwaps,
             AppSettingsKeys.logCorrections: Defaults.logCorrections,
             AppSettingsKeys.contextSubstitutionEnabled: Defaults.contextSubstitutionEnabled,
+            AppSettingsKeys.phoneticSnapEnabled: Defaults.phoneticSnapEnabled,
             AppSettingsKeys.contextSubstitutionCountdown: Defaults.contextSubstitutionCountdown,
             AppSettingsKeys.rejectedContextSubSwaps: Defaults.rejectedContextSubSwaps,
             AppSettingsKeys.keepRecentRecordings: Defaults.keepRecentRecordings
@@ -198,6 +202,11 @@ struct AppSettingsSnapshot: Equatable {
         static let rejectedBuiltInSwaps = ""  // JSON [String] of rejected built-in swap identities (suppression set)
         static let logCorrections = true  // log dictations + their edits for the Learn-tab review queue
         static let contextSubstitutionEnabled = false  // experimental: constrained LLM swap with countdown confirm
+        // Deterministic phonetic snapping toward the vocabulary ("superbees" ->
+        // "Supabase"). On by default: measured zero corruption on the A/B corpus
+        // (dictionary gate + present-term guard), and every swap is revertable
+        // from the review panel like any built-in correction.
+        static let phoneticSnapEnabled = true
         static let contextSubstitutionCountdown: Double = 5.0
         static let rejectedContextSubSwaps = ""
         static let keepRecentRecordings = false  // opt-in: stores last ~10 recordings for troubleshooting

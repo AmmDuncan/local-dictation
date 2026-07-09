@@ -10,6 +10,7 @@ struct LearnTab: View {
     @Binding var logCorrections: Bool
     @Binding var textReplacements: String
     @Binding var rejectedBuiltInSwaps: String
+    @Binding var phoneticSnapEnabled: Bool
 
     @State private var records: [CorrectionRecord] = []
     @State private var newFrom = ""
@@ -117,6 +118,12 @@ struct LearnTab: View {
                 }
             } footer: {
                 Text("Applied only inside a terminal when you're typing a git command — “main” is often misheard as “me”. Left alone everywhere else.")
+            }
+
+            Section {
+                Toggle("Sound-alike vocabulary matching", isOn: $phoneticSnapEnabled)
+            } footer: {
+                Text("Snaps garbled words onto your vocabulary when they sound and spell alike — “superbees” becomes “Supabase”. Never touches real English words; revert any swap from the review panel.")
             }
         }
         .formStyle(.grouped)

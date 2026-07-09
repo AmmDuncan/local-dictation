@@ -50,10 +50,11 @@ public enum ContextSubstitution {
 }
 
 extension ContextSubstitution {
-    private struct Token { let text: String; let range: NSRange }
+    struct Token { let text: String; let range: NSRange }
 
-    /// Whitespace-delimited tokens with their UTF-16 ranges in `s`.
-    private static func tokenize(_ s: String) -> [Token] {
+    /// Whitespace-delimited tokens with their UTF-16 ranges in `s`. Shared with
+    /// `PhoneticSnapCorrections` so all correction passes agree on tokenization.
+    static func tokenize(_ s: String) -> [Token] {
         let ns = s as NSString
         var tokens: [Token] = []
         var i = 0

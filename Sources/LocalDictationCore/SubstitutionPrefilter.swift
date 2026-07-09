@@ -97,6 +97,26 @@ public enum SubstitutionPrefilter {
         squashed.filter { !"aeiou".contains($0) }
     }
 
+    /// rapidfuzz `fuzz.ratio`: indel similarity on 0-100 —
+    /// `(1 - (lenA + lenB - 2·LCS) / (lenA + lenB)) · 100`. Shared orthographic
+    /// metric for passes that need spelling closeness (PhoneticSnapCorrections).
+    static func indelRatio(_ a: String, _ b: String) -> Double {
+        guard !a.isEmpty || !b.isEmpty else { return 100 }
+        let aChars = Array(a), bChars = Array(b)
+        var previous = [Int](repeating: 0, count: bChars.count + 1)
+        for ca in aChars {
+            var current = [0]
+            current.reserveCapacity(bChars.count + 1)
+            for (j, cb) in bChars.enumerated() {
+                current.append(ca == cb ? previous[j] + 1 : max(previous[j + 1], current[j]))
+            }
+            previous = current
+        }
+        let lcs = previous[bChars.count]
+        let total = aChars.count + bChars.count
+        return (1 - Double(total - 2 * lcs) / Double(total)) * 100
+    }
+
     /// Normalized Levenshtein similarity in 0...1.
     static func similarity(_ a: String, _ b: String) -> Double {
         guard !a.isEmpty, !b.isEmpty else { return 0 }

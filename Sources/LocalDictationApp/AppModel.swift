@@ -500,6 +500,21 @@ final class AppModel {
         let commandMode = context != nil && appClass.allowsCommandMode
         // Built-in swaps the user has rejected in the Learn tab — skipped at apply time.
         let suppressed = SuppressionSet.decode(settings.rejectedBuiltInSwaps)
+        // Candidates a mishearing may be corrected toward: the user's vocabulary
+        // (custom + built-in defaults) plus the live on-screen context. Vocabulary
+        // is the high-signal source the feature targets — brand/jargon terms like
+        // "Vercel"/"Kubernetes" aren't identifier-shaped so they never surface as
+        // on-screen candidates, and they're the canonical things to fix. Shared by
+        // the deterministic phonetic snap and the experimental LLM substitution.
+        let candidates = ContextBias.substitutionCandidates(
+            customVocabulary: settings.customVocabulary,
+            defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
+            context: context.map { ContextBias.promptContext(for: $0) }
+        )
+        // Never snap in a terminal: a wrong swap there lands inside an executable
+        // command, and the A/B corpus that proved 0-corruption had no command lines.
+        let phoneticSnap = wantsCorrection && settings.phoneticSnapEnabled
+            && !candidates.isEmpty && appClass != .terminal
         let preCorrect: (@Sendable (String) -> (String, [Edit]))? = (wantsCorrection || commandMode)
             ? { @Sendable text in
                 var result = text
@@ -516,7 +531,14 @@ final class AppModel {
                     result = corrected
                     passes.append(edits)
                 }
-                // Fold mishearing + command edits into one list in the final
+                if phoneticSnap {
+                    let (corrected, edits) = PhoneticSnapCorrections.applyTracked(
+                        to: result, vocabulary: candidates, suppressing: suppressed
+                    )
+                    result = corrected
+                    passes.append(edits)
+                }
+                // Fold the deterministic passes' edits into one list in the final
                 // pre-polish (Segment A) coordinate space.
                 return (result, EditFold.combine(passes))
             }
@@ -527,16 +549,6 @@ final class AppModel {
         // Shares the resident polish model. Reuses the SAME candidates whisper
         // is biased with (ContextBias), so swaps only target present terms.
         let ctxSubEnabled = settings.contextSubstitutionEnabled
-        // Candidates the LLM may swap a misheard word toward: the user's vocabulary
-        // (custom + built-in defaults) plus the live on-screen context. Vocabulary
-        // is the high-signal source the feature targets — brand/jargon terms like
-        // "Vercel"/"Kubernetes" aren't identifier-shaped so they never surface as
-        // on-screen candidates, and they're the canonical things to fix.
-        let candidates = ContextBias.substitutionCandidates(
-            customVocabulary: settings.customVocabulary,
-            defaults: settings.useDefaultVocabulary ? DefaultVocabulary.terms : [],
-            context: context.map { ContextBias.promptContext(for: $0) }
-        )
         let countdown = settings.contextSubstitutionCountdown
         let confirmer = substitutionConfirmer
         let manager = llamaManager

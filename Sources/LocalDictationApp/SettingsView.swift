@@ -25,6 +25,7 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.logCorrections) private var logCorrections = AppSettingsSnapshot.Defaults.logCorrections
     @AppStorage(AppSettingsKeys.rejectedBuiltInSwaps) private var rejectedBuiltInSwaps = AppSettingsSnapshot.Defaults.rejectedBuiltInSwaps
     @AppStorage(AppSettingsKeys.contextSubstitutionEnabled) private var contextSubstitutionEnabled = AppSettingsSnapshot.Defaults.contextSubstitutionEnabled
+    @AppStorage(AppSettingsKeys.phoneticSnapEnabled) private var phoneticSnapEnabled = AppSettingsSnapshot.Defaults.phoneticSnapEnabled
     @AppStorage(AppSettingsKeys.contextSubstitutionCountdown) private var contextSubstitutionCountdown = AppSettingsSnapshot.Defaults.contextSubstitutionCountdown
 
     @State private var readiness = ReadinessModel()
@@ -77,7 +78,8 @@ struct SettingsView: View {
             LearnTab(
                 logCorrections: $logCorrections,
                 textReplacements: $textReplacements,
-                rejectedBuiltInSwaps: $rejectedBuiltInSwaps
+                rejectedBuiltInSwaps: $rejectedBuiltInSwaps,
+                phoneticSnapEnabled: $phoneticSnapEnabled
             )
             .tabItem { Label("Learn", systemImage: "brain") }
             .tag(SettingsTab.learn)
