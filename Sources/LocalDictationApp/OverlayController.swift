@@ -177,16 +177,41 @@ final class OverlayController {
         state.detail = detail
     }
 
-    func hide(after seconds: TimeInterval = 0) {
+    /// How often to re-check the cursor while it parks on the overlay, and the
+    /// beat after it leaves before hiding (so a pass-through doesn't flicker).
+    private static let hoverPollSeconds: TimeInterval = 0.15
+    private static let hoverExitGraceSeconds: TimeInterval = 0.3
+
+    /// `holdWhileHovered` is opt-in per call site: right for the done and error
+    /// overlays (the user is reading them), wrong for sub-second blips like
+    /// no-speech, where a parked cursor would hold a toast open indefinitely.
+    func hide(after seconds: TimeInterval = 0, holdWhileHovered: Bool = false) {
         hideTask?.cancel()
         hideTask = Task { [weak self] in
             if seconds > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             }
+            // The cursor resting on the overlay means the user is reading it —
+            // hold until it leaves (plus a short grace). Checked via the global
+            // mouse position, NOT by accepting mouse events, so the panel stays
+            // click-through.
+            while holdWhileHovered, !Task.isCancelled, self?.cursorIsOverPanel == true {
+                try? await Task.sleep(nanoseconds: UInt64(Self.hoverPollSeconds * 1_000_000_000))
+                if self?.cursorIsOverPanel == false {
+                    try? await Task.sleep(nanoseconds: UInt64(Self.hoverExitGraceSeconds * 1_000_000_000))
+                }
+            }
             guard !Task.isCancelled else { return }
             self?.stopLevelUpdates()
             self?.panel?.orderOut(nil)
         }
+    }
+
+    /// NSEvent.mouseLocation and NSWindow.frame share the same bottom-left
+    /// screen coordinate space.
+    private var cursorIsOverPanel: Bool {
+        guard let panel, panel.isVisible else { return false }
+        return panel.frame.contains(NSEvent.mouseLocation)
     }
 
     private func present(phase: DictationPhase, title: String, detail: String) {

@@ -420,7 +420,11 @@ final class AppModel {
                     overlayController.hide(after: 0.4)
                 } else {
                     overlayController.showDone(text: transcript, swappedRanges: swappedRanges, polishStreak: showPolishStreak)
-                    overlayController.hide(after: 2.4)
+                    // Short un-hovered linger: the paste itself is the real
+                    // confirmation. Hovering the overlay holds it open to read
+                    // (OverlayController's cursor check), so the long dwell is
+                    // opt-in instead of a flat tax on every dictation.
+                    overlayController.hide(after: 1.0, holdWhileHovered: true)
                 }
             }
         } catch TranscriptionError.emptyTranscript {
@@ -793,20 +797,20 @@ final class AppModel {
             overlayController.showError(message: message, actionTitle: "Open Settings") {
                 PermissionStatus.openMicrophoneSettings()
             }
-            overlayController.hide(after: 6)
+            overlayController.hide(after: 6, holdWhileHovered: true)
         } else if message.localizedCaseInsensitiveContains("accessibility") {
             overlayController.showError(message: message, actionTitle: "Open Settings") {
                 PermissionStatus.openAccessibilitySettings()
             }
-            overlayController.hide(after: 6)
+            overlayController.hide(after: 6, holdWhileHovered: true)
         } else if message.localizedCaseInsensitiveContains("model") || message.localizedCaseInsensitiveContains("whisper-cli") {
             overlayController.showError(message: message, actionTitle: "Open Settings") {
                 Self.openAppSettings()
             }
-            overlayController.hide(after: 6)
+            overlayController.hide(after: 6, holdWhileHovered: true)
         } else {
             overlayController.showError(message: message)
-            overlayController.hide(after: 4)
+            overlayController.hide(after: 4, holdWhileHovered: true)
         }
     }
 
