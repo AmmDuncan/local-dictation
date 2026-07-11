@@ -32,6 +32,8 @@ struct LocalDictationCoreTestRunner {
         await suite.run("Server multipart body has required fields", testServerMultipartBody)
         await suite.run("Server multipart omits auto language", testServerMultipartOmitsAutoLanguage)
         await suite.run("Clipboard inserter restores previous value", testClipboardInserterRestoresPreviousValue)
+        await suite.run("Clipboard inserter never clobbers a newer clipboard write", testClipboardInserterSkipsRestoreAfterNewerWrite)
+        await suite.run("Back-to-back dictations restore the true original clipboard", testClipboardInserterBackToBackKeepsOriginal)
         await suite.run("Clipboard inserter clears initially empty clipboard", testClipboardInserterClearsInitiallyEmptyClipboard)
         await suite.run("Clipboard inserter restores when paste command fails", testClipboardRestoresOnPasteFailure)
         await suite.run("Workflow records and pastes transcript", testWorkflowRecordsAndPastesTranscript)
@@ -808,6 +810,7 @@ private func testServerMultipartOmitsAutoLanguage() throws {
 }
 
 private func testClipboardRestoresOnPasteFailure() async throws {
+    await ClipboardRestorer.shared.reset()
     let pasteboard = InMemoryPasteboard(text: "important note")
     let sender = FailingPasteCommandSender()
     let inserter = ClipboardInserter(pasteboard: pasteboard, pasteCommandSender: sender)
@@ -865,24 +868,76 @@ private func testWorkflowSkipsDegenerateRecording() async throws {
     try expect(inserter.insertedText == nil, "nothing should be inserted for a degenerate recording")
 }
 
+// If something else lands on the clipboard during the restore window (the user
+// copies, a clipboard manager rewrites), restoring "previous" would clobber it —
+// the inserter must only restore when the clipboard still holds ITS transcript.
+private func testClipboardInserterSkipsRestoreAfterNewerWrite() async throws {
+    await ClipboardRestorer.shared.reset()
+    let pasteboard = InMemoryPasteboard(text: "previous")
+    let sender = WritingPasteCommandSender(pasteboard: pasteboard, writes: "user copied this mid-window")
+    let inserter = ClipboardInserter(pasteboard: pasteboard, pasteCommandSender: sender, restoreDelayNanoseconds: 0)
+
+    try await inserter.insert("clobber-test transcript")
+    await ClipboardRestorer.shared.finish(pasteboard: pasteboard, text: "clobber-test transcript")
+
+    try expect(pasteboard.currentText == "user copied this mid-window",
+               "restore clobbered a newer clipboard write: \(String(describing: pasteboard.currentText))")
+}
+
+// A second dictation starting while the first restore window is still open must
+// inherit the FIRST insert's original clipboard — not treat the first transcript
+// as the thing to restore.
+private func testClipboardInserterBackToBackKeepsOriginal() async throws {
+    await ClipboardRestorer.shared.reset()
+    let pasteboard = InMemoryPasteboard(text: "user original")
+    let sender = RecordingPasteCommandSender()
+    let inserter = ClipboardInserter(pasteboard: pasteboard, pasteCommandSender: sender, restoreDelayNanoseconds: 0)
+
+    try await inserter.insert("b2b transcript A")
+    try await inserter.insert("b2b transcript B")
+    await ClipboardRestorer.shared.finish(pasteboard: pasteboard, text: "b2b transcript A")
+    await ClipboardRestorer.shared.finish(pasteboard: pasteboard, text: "b2b transcript B")
+
+    try expect(pasteboard.currentText == "user original",
+               "back-to-back restore lost the original: \(String(describing: pasteboard.currentText))")
+}
+
+/// Simulates a clipboard write that happens while the inserter is inside its
+/// restore window (e.g. the user copies something right after dictating).
+private final class WritingPasteCommandSender: PasteCommandSending, @unchecked Sendable {
+    private let pasteboard: InMemoryPasteboard
+    private let writes: String
+    init(pasteboard: InMemoryPasteboard, writes: String) {
+        self.pasteboard = pasteboard
+        self.writes = writes
+    }
+    func sendPasteCommand() throws {
+        pasteboard.writeString(writes)
+    }
+}
+
 private func testClipboardInserterRestoresPreviousValue() async throws {
+    await ClipboardRestorer.shared.reset()
     let pasteboard = InMemoryPasteboard(text: "previous")
     let sender = RecordingPasteCommandSender()
-    let inserter = ClipboardInserter(pasteboard: pasteboard, pasteCommandSender: sender)
+    let inserter = ClipboardInserter(pasteboard: pasteboard, pasteCommandSender: sender, restoreDelayNanoseconds: 0)
 
-    try await inserter.insert("new transcript")
+    try await inserter.insert("restore-test transcript")
+    await ClipboardRestorer.shared.finish(pasteboard: pasteboard, text: "restore-test transcript")
 
     try expect(sender.pasteCount == 1, "Expected one paste command.")
     try expect(pasteboard.currentText == "previous", "Expected previous clipboard to be restored.")
-    try expect(pasteboard.writes == ["new transcript", "previous"], "Unexpected clipboard writes \(pasteboard.writes)")
+    try expect(pasteboard.writes == ["restore-test transcript", "previous"], "Unexpected clipboard writes \(pasteboard.writes)")
 }
 
 private func testClipboardInserterClearsInitiallyEmptyClipboard() async throws {
+    await ClipboardRestorer.shared.reset()
     let pasteboard = InMemoryPasteboard(text: nil)
     let sender = RecordingPasteCommandSender()
     let inserter = ClipboardInserter(pasteboard: pasteboard, pasteCommandSender: sender)
 
-    try await inserter.insert("new transcript")
+    try await inserter.insert("clear-test transcript")
+    await ClipboardRestorer.shared.finish(pasteboard: pasteboard, text: "clear-test transcript")
 
     try expect(sender.pasteCount == 1, "Expected one paste command.")
     try expect(pasteboard.currentText == nil, "Expected clipboard to be empty after restore.")
