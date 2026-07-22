@@ -14,6 +14,7 @@ enum OverlaySnapshot {
 
         let cases: [(name: String, phase: DictationPhase, level: Double, detail: String)] = [
             ("listening", .listening, 0.62, ""),
+            ("listening-hover", .listening, 0.62, ""),
             ("transcribing", .transcribing, 0, ""),
             ("done", .done, 0, "Hello world"),
             ("cancelled", .cancelled, 0, ""),
@@ -24,9 +25,12 @@ enum OverlaySnapshot {
             state.phase = c.phase
             state.level = c.level
             state.detail = c.detail
+            // The hover case seeds the controls so the ✕/✓ render.
+            let hover = c.name == "listening-hover"
+            if hover { state.onCommit = {}; state.onCancel = {} }
             let view = ZStack {
                 Color(hex: 0x1B1F22)  // desktop-ish backdrop so the pill + shadow read
-                CompactOverlayView(state: state)
+                CompactOverlayView(state: state, previewHover: hover)
             }
             .frame(width: 340, height: 124)
             let renderer = ImageRenderer(content: view)

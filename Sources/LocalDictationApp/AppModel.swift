@@ -30,6 +30,8 @@ final class AppModel {
     private var pendingEnd: PendingEnd = .none
     private var escapeMonitor: Any?
     private var localEscapeMonitor: Any?
+    private var returnMonitor: Any?
+    private var localReturnMonitor: Any?
 
     /// Gathers on-device context (frontmost app + caret text) when context
     /// awareness is on. AX-only, transient — see AccessibilityContextProvider.
@@ -103,6 +105,24 @@ final class AppModel {
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53, let self, self.isRecording || self.isStarting {
                 Task { @MainActor in await self.cancelHold() }
+            }
+            return event
+        }
+
+        // Return / keypad Enter commits an in-progress dictation immediately (stop
+        // where it is, transcribe, insert) — the keyboard equivalent of the compact
+        // HUD's ✓ control, so cancel/insert are reachable without a mouse. Same
+        // dual global+local monitor split as Escape.
+        returnMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 36 || event.keyCode == 76 else { return }
+            Task { @MainActor in
+                guard let self, self.isRecording || self.isStarting else { return }
+                await self.endHold()
+            }
+        }
+        localReturnMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 36 || event.keyCode == 76, let self, self.isRecording || self.isStarting {
+                Task { @MainActor in await self.endHold() }
             }
             return event
         }
@@ -300,9 +320,12 @@ final class AppModel {
         // appears only when audio is flowing. That's what keeps the first words
         // from being clipped on a cold first-of-day dictation.
         if settings.showOverlay {
-            overlayController.showListening(detail: "") { [weak self] in
-                self?.recorder?.currentLevel ?? 0
-            }
+            overlayController.showListening(
+                detail: "",
+                levelProvider: { [weak self] in self?.recorder?.currentLevel ?? 0 },
+                onCommit: { [weak self] in Task { @MainActor in await self?.endHold() } },
+                onCancel: { [weak self] in Task { @MainActor in await self?.cancelHold() } }
+            )
         }
 
         // Recording is live — only now is it safe to honor end/cancel.

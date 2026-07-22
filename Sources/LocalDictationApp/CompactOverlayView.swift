@@ -6,13 +6,30 @@ import SwiftUI
 /// hypotheses that read as inaccuracy never appear. Deliberately dark regardless
 /// of system appearance so it reads over any underlying app (matching the
 /// reference treatment), while `WaveBars` still honors Reduce Motion.
+///
+/// While listening, hovering reveals ✕ (cancel/discard) and ✓ (insert now — stop
+/// where it is and inject). Keyboard equivalents (Esc / Enter) live in AppModel so
+/// the actions are reachable without a mouse.
 struct CompactOverlayView: View {
     var state: OverlayState
+
+    @State private var hovering: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(state: OverlayState, previewHover: Bool = false) {
+        self.state = state
+        _hovering = State(initialValue: previewHover)
+    }
 
     private let pillBG = Color(hex: 0x14171A)
     private let pillStroke = Color.white.opacity(0.12)
     private let inkDim = Color(hex: 0xF4F8F6).opacity(0.6)
     private let doneInk = Color(hex: 0xCDD4D7)
+
+    /// Show the controls only while listening and only when the actions are wired.
+    private var showControls: Bool {
+        hovering && state.phase == .listening && (state.onCommit != nil || state.onCancel != nil)
+    }
 
     var body: some View {
         content
@@ -22,6 +39,8 @@ struct CompactOverlayView: View {
                     .overlay(Capsule(style: .continuous).strokeBorder(pillStroke))
                     .shadow(color: .black.opacity(0.55), radius: 18, y: 8)
             )
+            .contentShape(Capsule(style: .continuous))
+            .onHover { hovering = $0 }
             // Breathing room so the pill's shadow renders in full instead of being
             // clipped to the panel's rectangular bounds (matches OverlayController).
             .padding(OverlayController.shadowMargin)
@@ -31,9 +50,18 @@ struct CompactOverlayView: View {
     @ViewBuilder private var content: some View {
         switch state.phase {
         case .listening, .reviewSubstitution:
-            WaveBars(level: state.level)
-                .frame(width: 150, height: 22)
-                .padding(.horizontal, 18)
+            HStack(spacing: 8) {
+                if showControls { controlButton(.cancel) }
+                // Clip: WaveBars draws fixed-width bars (not scaled to fit), so
+                // without this they overflow their lane and render under the
+                // flanking ✕/✓ controls.
+                WaveBars(level: state.level)
+                    .frame(width: showControls ? 92 : 150, height: 22)
+                    .clipShape(Capsule())
+                if showControls { controlButton(.commit) }
+            }
+            .padding(.horizontal, showControls ? 5 : 18)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: showControls)
         case .transcribing:
             HStack(spacing: 10) {
                 ProcessingDots().frame(height: 9)
@@ -69,5 +97,30 @@ struct CompactOverlayView: View {
             Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
                 .foregroundStyle(Brand.onSignal)
         }
+    }
+
+    // MARK: - Hover controls
+
+    private enum Control { case cancel, commit }
+
+    private func controlButton(_ kind: Control) -> some View {
+        let isCancel = kind == .cancel
+        let tint = isCancel ? Color(hex: 0xFF5D5D) : Brand.emerald
+        let glyph = isCancel ? Color(hex: 0xFF7A7A) : Brand.emerald
+        return Button {
+            if isCancel { state.onCancel?() } else { state.onCommit?() }
+        } label: {
+            ZStack {
+                Circle().fill(tint.opacity(0.16))
+                    .overlay(Circle().strokeBorder(tint.opacity(0.42)))
+                    .frame(width: 30, height: 30)
+                Image(systemName: isCancel ? "xmark" : "checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(glyph)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .accessibilityLabel(isCancel ? "Cancel dictation" : "Insert now")
     }
 }

@@ -47,6 +47,10 @@ final class OverlayState {
     }
 
     @ObservationIgnored var action: (() -> Void)?
+    /// Compact HUD hover/keyboard controls: commit = stop where it is + insert now;
+    /// cancel = discard. Set during listening, cleared otherwise.
+    @ObservationIgnored var onCommit: (() -> Void)?
+    @ObservationIgnored var onCancel: (() -> Void)?
     @ObservationIgnored var reviewToggle: ((Int) -> Void)?
     @ObservationIgnored var reviewApply: (() -> Void)?
     @ObservationIgnored var reviewKeep: (() -> Void)?
@@ -102,8 +106,15 @@ final class OverlayController {
         return cardHeight(for: phase) + Self.shadowMargin * 2
     }
 
-    func showListening(detail: String, levelProvider: @escaping () -> Double) {
+    func showListening(
+        detail: String,
+        levelProvider: @escaping () -> Double,
+        onCommit: (() -> Void)? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
         self.levelProvider = levelProvider
+        state.onCommit = onCommit
+        state.onCancel = onCancel
         present(phase: .listening, title: "Listening", detail: detail)
         startLevelUpdates()
     }
@@ -235,6 +246,7 @@ final class OverlayController {
             state.actionTitle = nil
             state.action = nil
         }
+        if phase != .listening { state.onCommit = nil; state.onCancel = nil }
         if phase != .done { state.swappedRanges = []; state.polishStreak = false }
         if phase != .reviewSubstitution {
             state.pendingSwaps = []
@@ -257,10 +269,12 @@ final class OverlayController {
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setContentSize(NSSize(width: panelWidth(for: style), height: panelHeight(for: phase)))
-        panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution
-        // While reviewing swaps the user clicks chips/words to toggle them — don't
-        // let a click drag the window (movable-by-background reads clicks as drags).
-        panel.isMovableByWindowBackground = phase != .reviewSubstitution
+        // The compact pill's hover controls (✕ / ✓) need clicks while listening.
+        let compactListening = style == .compact && phase == .listening
+        panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution && !compactListening
+        // Clicking a control (or a review chip) must not drag the window
+        // (movable-by-background reads clicks as drags).
+        panel.isMovableByWindowBackground = phase != .reviewSubstitution && !compactListening
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }
