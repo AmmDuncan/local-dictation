@@ -47,6 +47,10 @@ final class OverlayState {
     }
 
     @ObservationIgnored var action: (() -> Void)?
+    /// Compact HUD hover/keyboard controls: commit = stop where it is + insert now;
+    /// cancel = discard. Set during listening, cleared otherwise.
+    @ObservationIgnored var onCommit: (() -> Void)?
+    @ObservationIgnored var onCancel: (() -> Void)?
     @ObservationIgnored var reviewToggle: ((Int) -> Void)?
     @ObservationIgnored var reviewApply: (() -> Void)?
     @ObservationIgnored var reviewKeep: (() -> Void)?
@@ -69,7 +73,21 @@ final class OverlayController {
     /// edge. Keep the two in sync.
     static let shadowMargin: CGFloat = 40
     private static let cardWidth: CGFloat = 384
-    private let panelWidth: CGFloat = OverlayController.cardWidth + OverlayController.shadowMargin * 2
+    // Compact HUD: one fixed pill size across phases (the pill hugs its content
+    // and centers). Wide enough for the widest state ("Transcribing").
+    private static let compactCardWidth: CGFloat = 240
+    private static let compactCardHeight: CGFloat = 44
+
+    /// The overlay treatment in effect, read fresh so a Settings change applies on
+    /// the next dictation. `present` rebuilds the panel when this flips.
+    private var style: OverlayStyle { AppSettingsSnapshot.current.overlay }
+    /// The style the current panel was built for, so we know when to rebuild.
+    private var hostedStyle: OverlayStyle?
+
+    private func panelWidth(for style: OverlayStyle) -> CGFloat {
+        let card = style == .compact ? Self.compactCardWidth : Self.cardWidth
+        return card + Self.shadowMargin * 2
+    }
 
     /// Visible card height per phase. The panel adds `shadowMargin` top + bottom.
     private func cardHeight(for phase: DictationPhase) -> CGFloat {
@@ -84,11 +102,19 @@ final class OverlayController {
     }
 
     private func panelHeight(for phase: DictationPhase) -> CGFloat {
-        cardHeight(for: phase) + Self.shadowMargin * 2
+        if style == .compact { return Self.compactCardHeight + Self.shadowMargin * 2 }
+        return cardHeight(for: phase) + Self.shadowMargin * 2
     }
 
-    func showListening(detail: String, levelProvider: @escaping () -> Double) {
+    func showListening(
+        detail: String,
+        levelProvider: @escaping () -> Double,
+        onCommit: (() -> Void)? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
         self.levelProvider = levelProvider
+        state.onCommit = onCommit
+        state.onCancel = onCancel
         present(phase: .listening, title: "Listening", detail: detail)
         startLevelUpdates()
     }
@@ -220,6 +246,7 @@ final class OverlayController {
             state.actionTitle = nil
             state.action = nil
         }
+        if phase != .listening { state.onCommit = nil; state.onCancel = nil }
         if phase != .done { state.swappedRanges = []; state.polishStreak = false }
         if phase != .reviewSubstitution {
             state.pendingSwaps = []
@@ -233,13 +260,21 @@ final class OverlayController {
         state.title = title
         state.detail = detail
 
+        // Rebuild the panel if the overlay style changed since it was built (the
+        // compact pill and the standard card host different views + sizes).
+        if let existing = panel, hostedStyle != style {
+            existing.orderOut(nil)
+            panel = nil
+        }
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.setContentSize(NSSize(width: panelWidth, height: panelHeight(for: phase)))
-        panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution
-        // While reviewing swaps the user clicks chips/words to toggle them — don't
-        // let a click drag the window (movable-by-background reads clicks as drags).
-        panel.isMovableByWindowBackground = phase != .reviewSubstitution
+        panel.setContentSize(NSSize(width: panelWidth(for: style), height: panelHeight(for: phase)))
+        // The compact pill's hover controls (✕ / ✓) need clicks while listening.
+        let compactListening = style == .compact && phase == .listening
+        panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution && !compactListening
+        // Clicking a control (or a review chip) must not drag the window
+        // (movable-by-background reads clicks as drags).
+        panel.isMovableByWindowBackground = phase != .reviewSubstitution && !compactListening
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }
@@ -266,8 +301,9 @@ final class OverlayController {
     }
 
     private func makePanel() -> NSPanel {
+        hostedStyle = style
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight(for: .listening)),
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth(for: style), height: panelHeight(for: .listening)),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -281,7 +317,12 @@ final class OverlayController {
         panel.hasShadow = false  // SwiftUI draws the rounded shadow; the window shadow is square.
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        let hosting = NSHostingView(rootView: OverlayView(state: state))
+        let hosting: NSHostingView<AnyView>
+        if style == .compact {
+            hosting = NSHostingView(rootView: AnyView(CompactOverlayView(state: state)))
+        } else {
+            hosting = NSHostingView(rootView: AnyView(OverlayView(state: state)))
+        }
         hosting.layer?.backgroundColor = .clear
         panel.contentView = hosting
 

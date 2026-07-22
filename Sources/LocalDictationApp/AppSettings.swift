@@ -8,6 +8,7 @@ enum AppSettingsKeys {
     static let language = "language"
     static let pasteOnRelease = "pasteOnRelease"
     static let showOverlay = "showOverlay"
+    static let overlayStyle = "overlayStyle"
     static let inputDeviceUID = "inputDeviceUID"
     static let cleanUpTranscript = "cleanUpTranscript"
     static let polishWithAI = "polishWithAI"
@@ -61,6 +62,12 @@ enum InsertionMethod: String { case paste, keystroke }
 /// - `apple`: Apple SpeechAnalyzer, in-process + ANE, no model download. macOS 26+.
 enum TranscriptionEngineKind: String, CaseIterable { case whisper, apple }
 
+/// The overlay's visual treatment.
+/// - `standard`: the full glass card with live transcript text.
+/// - `compact`: a small waveform-only pill — no live text (avoids the flickering
+///   partial-hypothesis text); the final result injects at the cursor.
+enum OverlayStyle: String, CaseIterable { case standard, compact }
+
 struct AppSettingsSnapshot: Equatable {
     var whisperExecutablePath: String
     var modelPath: String
@@ -68,6 +75,7 @@ struct AppSettingsSnapshot: Equatable {
     var language: String
     var pasteOnRelease: Bool
     var showOverlay: Bool
+    var overlayStyle: String
     var inputDeviceUID: String
     var cleanUpTranscript: Bool
     var polishWithAI: Bool
@@ -104,6 +112,8 @@ struct AppSettingsSnapshot: Equatable {
         return stored
     }
 
+    var overlay: OverlayStyle { OverlayStyle(rawValue: overlayStyle) ?? .compact }
+
     static var current: AppSettingsSnapshot {
         registerDefaults()
         let defaults = UserDefaults.standard
@@ -114,6 +124,7 @@ struct AppSettingsSnapshot: Equatable {
             language: defaults.string(forKey: AppSettingsKeys.language) ?? Defaults.language,
             pasteOnRelease: defaults.object(forKey: AppSettingsKeys.pasteOnRelease) as? Bool ?? Defaults.pasteOnRelease,
             showOverlay: defaults.object(forKey: AppSettingsKeys.showOverlay) as? Bool ?? Defaults.showOverlay,
+            overlayStyle: defaults.string(forKey: AppSettingsKeys.overlayStyle) ?? Defaults.overlayStyle,
             inputDeviceUID: defaults.string(forKey: AppSettingsKeys.inputDeviceUID) ?? Defaults.inputDeviceUID,
             cleanUpTranscript: defaults.object(forKey: AppSettingsKeys.cleanUpTranscript) as? Bool ?? Defaults.cleanUpTranscript,
             polishWithAI: defaults.object(forKey: AppSettingsKeys.polishWithAI) as? Bool ?? Defaults.polishWithAI,
@@ -145,6 +156,7 @@ struct AppSettingsSnapshot: Equatable {
             AppSettingsKeys.language: Defaults.language,
             AppSettingsKeys.pasteOnRelease: Defaults.pasteOnRelease,
             AppSettingsKeys.showOverlay: Defaults.showOverlay,
+            AppSettingsKeys.overlayStyle: Defaults.overlayStyle,
             AppSettingsKeys.inputDeviceUID: Defaults.inputDeviceUID,
             AppSettingsKeys.cleanUpTranscript: Defaults.cleanUpTranscript,
             AppSettingsKeys.polishWithAI: Defaults.polishWithAI,
@@ -201,6 +213,10 @@ struct AppSettingsSnapshot: Equatable {
         static let language = "en"
         static let pasteOnRelease = true
         static let showOverlay = true
+        // Compact is the default: a waveform-only pill with no live partial text
+        // (the flickering partial hypotheses read as inaccuracy). Users who want
+        // the live transcript can switch to Standard in Settings > General.
+        static let overlayStyle = "compact"
         static let inputDeviceUID = ""  // empty = system default input
         static let cleanUpTranscript = true
         static let polishWithAI = false  // opt-in: needs the ~3GB model + resident llama-server

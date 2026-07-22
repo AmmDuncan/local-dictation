@@ -52,6 +52,7 @@ struct LocalDictationApp: App {
     @StateObject private var updater = UpdaterModel()
 
     init() {
+        OverlaySnapshot.runIfRequested()  // dev-only, flag-gated; exits before UI
         NSApplication.shared.setActivationPolicy(.accessory)
     }
 
