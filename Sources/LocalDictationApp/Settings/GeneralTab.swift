@@ -5,6 +5,7 @@ struct GeneralTab: View {
     var readiness: ReadinessModel
     @Binding var pasteOnRelease: Bool
     @Binding var showOverlay: Bool
+    @Binding var overlayStyle: String
     @Binding var cleanUpTranscript: Bool
     @Binding var polishWithAI: Bool
     var polishStore: PolishModelStore
@@ -36,8 +37,15 @@ struct GeneralTab: View {
                 Section("Output") {
                     Toggle("Paste on release", isOn: $pasteOnRelease)
                         .help("When on, your spoken words are typed into whatever you're writing. Requires Accessibility permission.")
-                    Toggle("Show live preview", isOn: $showOverlay)
-                        .help("Show a floating panel with your words as you speak.")
+                    Toggle("Show overlay", isOn: $showOverlay)
+                        .help("Show a floating panel while you dictate.")
+                    if showOverlay {
+                        Picker("Overlay style", selection: $overlayStyle) {
+                            Text("Compact — waveform only").tag("compact")
+                            Text("Standard — live transcript").tag("standard")
+                        }
+                        .help("Compact shows just a waveform pill and injects the final text (no flickering partial text). Standard shows the live transcript as you speak.")
+                    }
                     Toggle("Clean up dictation", isOn: $cleanUpTranscript)
                         .help("Before typing, remove filler words (um, uh) and fix capitalization & spacing. Never changes your wording.")
                     Toggle(isOn: $polishWithAI) {

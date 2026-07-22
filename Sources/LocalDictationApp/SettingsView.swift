@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.language) private var language = AppSettingsSnapshot.Defaults.language
     @AppStorage(AppSettingsKeys.pasteOnRelease) private var pasteOnRelease = AppSettingsSnapshot.Defaults.pasteOnRelease
     @AppStorage(AppSettingsKeys.showOverlay) private var showOverlay = AppSettingsSnapshot.Defaults.showOverlay
+    @AppStorage(AppSettingsKeys.overlayStyle) private var overlayStyle = AppSettingsSnapshot.Defaults.overlayStyle
     @AppStorage(AppSettingsKeys.inputDeviceUID) private var inputDeviceUID = AppSettingsSnapshot.Defaults.inputDeviceUID
     @AppStorage(AppSettingsKeys.cleanUpTranscript) private var cleanUpTranscript = AppSettingsSnapshot.Defaults.cleanUpTranscript
     @AppStorage(AppSettingsKeys.polishWithAI) private var polishWithAI = AppSettingsSnapshot.Defaults.polishWithAI
@@ -39,6 +40,7 @@ struct SettingsView: View {
                 readiness: readiness,
                 pasteOnRelease: $pasteOnRelease,
                 showOverlay: $showOverlay,
+                overlayStyle: $overlayStyle,
                 cleanUpTranscript: $cleanUpTranscript,
                 polishWithAI: $polishWithAI,
                 polishStore: polishStore,

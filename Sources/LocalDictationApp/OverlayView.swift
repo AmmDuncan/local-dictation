@@ -508,10 +508,14 @@ private struct CountdownRing: View {
 
 private let waveBarCount = 24
 
-private struct WaveBars: View {
+struct WaveBars: View {
     var level: Double
     private let count = waveBarCount
     @State private var levels: [Double] = (0..<waveBarCount).map { 0.14 + 0.34 * abs(sin(Double($0) * 0.7)) }
+    /// Freeze the scrolling meter for vestibular-sensitive users — the overlay is
+    /// an always-on floating HUD, so a permanently churning wave is exactly what
+    /// Reduce Motion exists to stop. Bars hold their calm initial pattern.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Right→left scroll cadence for the bar history. Decoupled from the 30Hz
     /// mic-level sampling so the wave glides calmly instead of racing across.
@@ -532,6 +536,7 @@ private struct WaveBars: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .onReceive(scroll) { _ in
+            guard !reduceMotion else { return }
             levels.removeFirst()
             levels.append(max(level, 0.04))
         }
@@ -543,15 +548,17 @@ private struct WaveBars: View {
     }
 
     private func edgeOpacity(_ i: Int) -> Double {
+        // Edge fade, floored at 0.5 so even the outermost bars clear WCAG 1.4.11
+        // non-text contrast (≥3:1) against the dark pill (wren-verified 3.32:1+).
         let d = min(i, count - 1 - i)
-        if d == 0 { return 0.32 }
-        if d == 1 { return 0.5 }
-        if d == 2 { return 0.7 }
+        if d == 0 { return 0.5 }
+        if d == 1 { return 0.65 }
+        if d == 2 { return 0.8 }
         return 1
     }
 }
 
-private struct ProcessingDots: View {
+struct ProcessingDots: View {
     @State private var animate = false
     var body: some View {
         HStack(spacing: 6) {
