@@ -17,7 +17,7 @@ A strict-local macOS menu bar dictation app. Hold the configured shortcut, speak
 - macOS 13 or later.
 - Swift 6 toolchain.
 - Local `whisper.cpp` build with `whisper-cli`.
-- A local Whisper model file, for example `ggml-base.en.bin`.
+- A local Whisper model file, for example `ggml-large-v3-turbo-q5_0.bin`.
 - Microphone permission.
 - Accessibility permission if paste-on-release is enabled.
 
@@ -46,7 +46,7 @@ swift run LocalDictationCoreTestRunner
 
 - Shortcut: Control-Space. (Note: macOS may map ⌃Space to "Select previous input source" if you have multiple input sources — rebind in Settings if it clashes.)
 - `whisper-cli`: `/opt/homebrew/bin/whisper-cli`.
-- Model: `~/models/ggml-base.en.bin`.
+- Model: `~/models/ggml-large-v3-turbo-q5_0.bin`.
 - Language: `auto`.
 - Paste on release: enabled.
 - Overlay: enabled.

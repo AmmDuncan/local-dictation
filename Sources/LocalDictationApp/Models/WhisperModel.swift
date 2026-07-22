@@ -34,7 +34,7 @@ enum ModelCatalog {
             language: "Multilingual",
             speed: "Fast",
             accuracy: "Best",
-            note: "Recommended"
+            note: "Larger"
         ),
         WhisperModel(
             id: "large-v3-turbo-q5_0",
@@ -46,7 +46,7 @@ enum ModelCatalog {
             language: "Multilingual",
             speed: "Faster",
             accuracy: "Best",
-            note: "Lighter"
+            note: "Recommended"
         ),
         WhisperModel(
             id: "large-v3",

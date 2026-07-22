@@ -17,9 +17,10 @@ enum FirstRunSetup {
         let persisted = defaults.persistentDomain(forName: bundleID) ?? [:]
         guard persisted.isEmpty else { return }
 
-        // New installs default to the recommended model (large-v3-turbo) rather
-        // than base.en — the Models tab / health strip then prompts the one-time
-        // download. Cleanup is already on by default; polish stays opt-in.
-        defaults.set("~/models/ggml-large-v3-turbo.bin", forKey: AppSettingsKeys.modelPath)
+        // New installs default to the recommended model (large-v3-turbo-q5_0):
+        // same accuracy as full turbo at ~3x smaller download. The Models tab /
+        // health strip then prompts the one-time download. Cleanup is already on
+        // by default; polish stays opt-in.
+        defaults.set("~/models/ggml-large-v3-turbo-q5_0.bin", forKey: AppSettingsKeys.modelPath)
     }
 }
