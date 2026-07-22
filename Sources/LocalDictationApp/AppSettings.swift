@@ -173,7 +173,7 @@ struct AppSettingsSnapshot: Equatable {
 
     enum Defaults {
         static let whisperExecutablePath = ""  // empty = auto-locate (bundled, then Homebrew)
-        static let modelPath = "~/models/ggml-base.en.bin"
+        static let modelPath = "~/models/ggml-large-v3-turbo-q5_0.bin"
         // English by default: per-clip language auto-detect is unreliable on short
         // dictation clips. Non-English users can switch in Settings (see the
         // one-time `auto` → `en` migration in registerDefaults).
