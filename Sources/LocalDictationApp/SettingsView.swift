@@ -7,6 +7,7 @@ private enum SettingsTab: Hashable {
 struct SettingsView: View {
     @AppStorage(AppSettingsKeys.whisperExecutablePath) private var whisperExecutablePath = AppSettingsSnapshot.Defaults.whisperExecutablePath
     @AppStorage(AppSettingsKeys.modelPath) private var modelPath = AppSettingsSnapshot.Defaults.modelPath
+    @AppStorage(AppSettingsKeys.transcriptionEngine) private var transcriptionEngine = AppSettingsSnapshot.Defaults.transcriptionEngine
     @AppStorage(AppSettingsKeys.language) private var language = AppSettingsSnapshot.Defaults.language
     @AppStorage(AppSettingsKeys.pasteOnRelease) private var pasteOnRelease = AppSettingsSnapshot.Defaults.pasteOnRelease
     @AppStorage(AppSettingsKeys.showOverlay) private var showOverlay = AppSettingsSnapshot.Defaults.showOverlay
@@ -37,6 +38,7 @@ struct SettingsView: View {
         TabView(selection: $selectedTab) {
             GeneralTab(
                 readiness: readiness,
+                transcriptionEngine: $transcriptionEngine,
                 pasteOnRelease: $pasteOnRelease,
                 showOverlay: $showOverlay,
                 cleanUpTranscript: $cleanUpTranscript,

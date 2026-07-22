@@ -4,6 +4,7 @@ import LocalDictationCore
 enum AppSettingsKeys {
     static let whisperExecutablePath = "whisperExecutablePath"
     static let modelPath = "modelPath"
+    static let transcriptionEngine = "transcriptionEngine"
     static let language = "language"
     static let pasteOnRelease = "pasteOnRelease"
     static let showOverlay = "showOverlay"
@@ -55,9 +56,15 @@ enum PolishProof {
 /// How transcribed text reaches the cursor.
 enum InsertionMethod: String { case paste, keystroke }
 
+/// Which recognition backend transcribes the audio.
+/// - `whisper`: local whisper.cpp (resident server → per-call CLI). All macOS 14+.
+/// - `apple`: Apple SpeechAnalyzer, in-process + ANE, no model download. macOS 26+.
+enum TranscriptionEngineKind: String, CaseIterable { case whisper, apple }
+
 struct AppSettingsSnapshot: Equatable {
     var whisperExecutablePath: String
     var modelPath: String
+    var transcriptionEngine: String
     var language: String
     var pasteOnRelease: Bool
     var showOverlay: Bool
@@ -89,12 +96,21 @@ struct AppSettingsSnapshot: Equatable {
 
     var insertion: InsertionMethod { InsertionMethod(rawValue: insertionMethod) ?? .paste }
 
+    /// Resolved engine choice, falling back to whisper below macOS 26 (Apple
+    /// SpeechAnalyzer is unavailable there) even if `apple` was persisted.
+    var engineKind: TranscriptionEngineKind {
+        let stored = TranscriptionEngineKind(rawValue: transcriptionEngine) ?? .whisper
+        if stored == .apple, #unavailable(macOS 26) { return .whisper }
+        return stored
+    }
+
     static var current: AppSettingsSnapshot {
         registerDefaults()
         let defaults = UserDefaults.standard
         return AppSettingsSnapshot(
             whisperExecutablePath: defaults.string(forKey: AppSettingsKeys.whisperExecutablePath) ?? Defaults.whisperExecutablePath,
             modelPath: defaults.string(forKey: AppSettingsKeys.modelPath) ?? Defaults.modelPath,
+            transcriptionEngine: defaults.string(forKey: AppSettingsKeys.transcriptionEngine) ?? Defaults.transcriptionEngine,
             language: defaults.string(forKey: AppSettingsKeys.language) ?? Defaults.language,
             pasteOnRelease: defaults.object(forKey: AppSettingsKeys.pasteOnRelease) as? Bool ?? Defaults.pasteOnRelease,
             showOverlay: defaults.object(forKey: AppSettingsKeys.showOverlay) as? Bool ?? Defaults.showOverlay,
@@ -125,6 +141,7 @@ struct AppSettingsSnapshot: Equatable {
         UserDefaults.standard.register(defaults: [
             AppSettingsKeys.whisperExecutablePath: Defaults.whisperExecutablePath,
             AppSettingsKeys.modelPath: Defaults.modelPath,
+            AppSettingsKeys.transcriptionEngine: Defaults.transcriptionEngine,
             AppSettingsKeys.language: Defaults.language,
             AppSettingsKeys.pasteOnRelease: Defaults.pasteOnRelease,
             AppSettingsKeys.showOverlay: Defaults.showOverlay,
@@ -174,6 +191,10 @@ struct AppSettingsSnapshot: Equatable {
     enum Defaults {
         static let whisperExecutablePath = ""  // empty = auto-locate (bundled, then Homebrew)
         static let modelPath = "~/models/ggml-base.en.bin"
+        // whisper by default: works on all supported macOS. Apple SpeechAnalyzer
+        // is opt-in (macOS 26+) via Settings; `engineKind` downgrades it to
+        // whisper automatically on older systems.
+        static let transcriptionEngine = "whisper"
         // English by default: per-clip language auto-detect is unreliable on short
         // dictation clips. Non-English users can switch in Settings (see the
         // one-time `auto` → `en` migration in registerDefaults).

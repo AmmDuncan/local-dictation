@@ -445,8 +445,26 @@ final class AppModel {
     /// `description` (binary names, paths, status codes), which stays in logs.
     private func userFacingMessage(for error: Error) -> String {
         if let error = error as? TranscriptionError { return error.userMessage }
+        if let error = error as? AppleSpeechError { return error.userMessage }
         if let error = error as? AudioRecordingError { return error.description }
         return "Something went wrong. Please try again."
+    }
+
+    /// Derives Apple `contextualStrings` from the whisper-style prompt string:
+    /// split on commas / newlines, keep short distinctive phrases. Same vocabulary
+    /// source, different delivery (the analyzer wants a term list, not a sentence).
+    private static func contextualStrings(from prompt: String?) -> [String] {
+        guard let prompt, !prompt.isEmpty else { return [] }
+        var seen = Set<String>()
+        var terms: [String] = []
+        for raw in prompt.split(whereSeparator: { $0 == "," || $0 == "\n" }) {
+            let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = term.lowercased()
+            guard term.count > 1, term.count <= 60, !seen.contains(key) else { continue }
+            seen.insert(key)
+            terms.append(term)
+        }
+        return Array(terms.prefix(300))
     }
 
     private func makeWorkflow(
@@ -456,14 +474,27 @@ final class AppModel {
         // load rather than racing a cold CLI against it (which can fail). Only if
         // the server can't come up does it fall back to the per-call CLI.
         let prompt = contextPrompt(settings: settings, context: context)
-        let transcriber = ResolvingTranscriptionEngine(
-            serverManager: serverManager,
-            configuration: makeConfiguration(settings: settings, timeoutSeconds: 60, prompt: prompt),
-            language: settings.normalizedLanguage,
-            timeoutSeconds: 60,
-            serverWait: 30,
-            prompt: prompt
-        )
+        let transcriber: TranscriptionEngine
+        if settings.engineKind == .apple, #available(macOS 26, *) {
+            // In-process Apple SpeechAnalyzer — no resident server, no CLI. Vocab
+            // bias travels as contextualStrings instead of the whisper prompt.
+            transcriber = AppleSpeechEngine(
+                localeID: settings.normalizedLanguage ?? "en-US",
+                contextualStrings: Self.contextualStrings(from: prompt)
+            )
+        } else {
+            // The final pass prefers the resident server, waiting out a cold model
+            // load rather than racing a cold CLI against it (which can fail). Only
+            // if the server can't come up does it fall back to the per-call CLI.
+            transcriber = ResolvingTranscriptionEngine(
+                serverManager: serverManager,
+                configuration: makeConfiguration(settings: settings, timeoutSeconds: 60, prompt: prompt),
+                language: settings.normalizedLanguage,
+                timeoutSeconds: 60,
+                serverWait: 30,
+                prompt: prompt
+            )
+        }
 
         let inserter = makeInserter(settings: settings)
 
