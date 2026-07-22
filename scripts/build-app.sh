@@ -302,6 +302,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Local Dictation records your voice to transcribe it locally with whisper.cpp.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Local Dictation uses Apple's on-device speech recognition to transcribe your voice locally when the Apple engine is selected.</string>
   <key>SUFeedURL</key>
   <string>${SU_FEED_URL}</string>
   <key>SUPublicEDKey</key>

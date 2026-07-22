@@ -3,6 +3,7 @@ import SwiftUI
 
 struct GeneralTab: View {
     var readiness: ReadinessModel
+    @Binding var transcriptionEngine: String
     @Binding var pasteOnRelease: Bool
     @Binding var showOverlay: Bool
     @Binding var cleanUpTranscript: Bool
@@ -31,6 +32,22 @@ struct GeneralTab: View {
                     Text("Shortcuts")
                 } footer: {
                     Text("Set either or both — pick the dictation key by feel: hold-to-talk for a quick burst, tap-to-toggle for hands-free.")
+                }
+
+                if #available(macOS 26, *) {
+                    Section {
+                        Picker("Engine", selection: $transcriptionEngine) {
+                            Text("Whisper — local model").tag("whisper")
+                            Text("Apple — built-in, no download").tag("apple")
+                        }
+                        .help("Whisper runs a local whisper.cpp model you download. Apple uses macOS's built-in on-device speech recognition: nothing to download, and it streams as you speak. Both are fully on-device.")
+                    } header: {
+                        Text("Recognition")
+                    } footer: {
+                        Text(transcriptionEngine == "apple"
+                            ? "Using Apple's on-device recognition. The Models tab (Whisper) doesn't apply while this is selected."
+                            : "Using a local Whisper model. Pick or download one in the Models tab.")
+                    }
                 }
 
                 Section("Output") {
