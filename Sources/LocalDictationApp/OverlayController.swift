@@ -75,8 +75,8 @@ final class OverlayController {
     private static let cardWidth: CGFloat = 384
     // Compact HUD: one fixed pill size across phases (the pill hugs its content
     // and centers). Wide enough for the widest state ("Transcribing").
-    private static let compactCardWidth: CGFloat = 240
-    private static let compactCardHeight: CGFloat = 44
+    private static let compactCardWidth: CGFloat = 208
+    private static let compactCardHeight: CGFloat = 34
 
     /// The overlay treatment in effect, read fresh so a Settings change applies on
     /// the next dictation. `present` rebuilds the panel when this flips.
@@ -272,9 +272,10 @@ final class OverlayController {
         // The compact pill's hover controls (✕ / ✓) need clicks while listening.
         let compactListening = style == .compact && phase == .listening
         panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution && !compactListening
-        // Clicking a control (or a review chip) must not drag the window
-        // (movable-by-background reads clicks as drags).
-        panel.isMovableByWindowBackground = phase != .reviewSubstitution && !compactListening
+        // Keep the compact pill draggable while listening — the ✕/✓ are controls
+        // that consume their own clicks, so dragging the pill body still works.
+        // Only the review card (chip toggles) opts out of drag-by-background.
+        panel.isMovableByWindowBackground = phase != .reviewSubstitution
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }
@@ -348,7 +349,12 @@ final class OverlayController {
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         guard let frame = screen?.visibleFrame else { return }
         let x = frame.midX - panel.frame.width / 2
-        let y = frame.maxY - panel.frame.height - 44
+        // Compact HUD sits in the lower third (~75% down), centered — near where the
+        // cursor/typing is, out of the way. The standard card keeps its near-top
+        // placement. Either can be dragged anywhere (the move persists).
+        let y = style == .compact
+            ? frame.minY + frame.height * 0.25
+            : frame.maxY - panel.frame.height - 44
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 }

@@ -31,9 +31,11 @@ struct CompactOverlayView: View {
         hovering && state.phase == .listening && (state.onCommit != nil || state.onCancel != nil)
     }
 
+    private let pillHeight: CGFloat = 34
+
     var body: some View {
         content
-            .frame(height: 44)
+            .frame(height: pillHeight)
             .background(
                 Capsule(style: .continuous).fill(pillBG)
                     .overlay(Capsule(style: .continuous).strokeBorder(pillStroke))
@@ -55,46 +57,46 @@ struct CompactOverlayView: View {
                 // Clip: WaveBars draws fixed-width bars (not scaled to fit), so
                 // without this they overflow their lane and render under the
                 // flanking ✕/✓ controls.
-                WaveBars(level: state.level)
-                    .frame(width: showControls ? 92 : 150, height: 22)
+                WaveBars(level: state.level, slim: true, barCount: 20)
+                    .frame(width: showControls ? 68 : 100, height: 18)
                     .clipShape(Capsule())
                 if showControls { controlButton(.commit) }
             }
-            .padding(.horizontal, showControls ? 5 : 18)
+            .padding(.horizontal, showControls ? 4 : 18)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: showControls)
         case .transcribing:
-            HStack(spacing: 10) {
-                ProcessingDots().frame(height: 9)
-                Text("Transcribing").font(.system(size: 12)).foregroundStyle(inkDim)
+            HStack(spacing: 8) {
+                ProcessingDots(count: 3, size: 6).frame(height: 6)
+                Text("Transcribing").font(.system(size: 11)).foregroundStyle(inkDim)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 14)
         case .done:
-            HStack(spacing: 9) {
+            HStack(spacing: 7) {
                 checkBadge
-                Text("Inserted").font(.system(size: 12, weight: .medium)).foregroundStyle(doneInk)
+                Text("Inserted").font(.system(size: 11, weight: .medium)).foregroundStyle(doneInk)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 14)
         case .cancelled:
-            HStack(spacing: 8) {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(inkDim)
-                Text("Discarded").font(.system(size: 12)).foregroundStyle(inkDim)
+            HStack(spacing: 6) {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(inkDim)
+                Text("Discarded").font(.system(size: 11)).foregroundStyle(inkDim)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 14)
         case .error:
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11)).foregroundStyle(Color(hex: 0xFF8A6B))
+                    .font(.system(size: 10)).foregroundStyle(Color(hex: 0xFF8A6B))
                 Text(state.detail.isEmpty ? "Couldn't dictate" : state.detail)
-                    .font(.system(size: 12)).foregroundStyle(inkDim).lineLimit(1)
+                    .font(.system(size: 11)).foregroundStyle(inkDim).lineLimit(1)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
         }
     }
 
     private var checkBadge: some View {
         ZStack {
-            Circle().fill(Brand.emerald).frame(width: 18, height: 18)
-            Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
+            Circle().fill(Brand.emerald).frame(width: 15, height: 15)
+            Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Brand.onSignal)
         }
     }
@@ -113,9 +115,9 @@ struct CompactOverlayView: View {
             ZStack {
                 Circle().fill(tint.opacity(0.16))
                     .overlay(Circle().strokeBorder(tint.opacity(0.42)))
-                    .frame(width: 30, height: 30)
+                    .frame(width: 26, height: 26)
                 Image(systemName: isCancel ? "xmark" : "checkmark")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(glyph)
             }
         }
