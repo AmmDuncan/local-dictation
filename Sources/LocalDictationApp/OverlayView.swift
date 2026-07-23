@@ -510,41 +510,81 @@ private let waveBarCount = 24
 
 struct WaveBars: View {
     var level: Double
-    private let count = waveBarCount
-    @State private var levels: [Double] = (0..<waveBarCount).map { 0.14 + 0.34 * abs(sin(Double($0) * 0.7)) }
-    /// Freeze the scrolling meter for vestibular-sensitive users — the overlay is
-    /// an always-on floating HUD, so a permanently churning wave is exactly what
-    /// Reduce Motion exists to stop. Bars hold their calm initial pattern.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Slimmer bars + softer glow for the compact HUD pill (the standard card uses
+    /// the fuller default). Keeps the small pill from reading chunky.
+    var slim = false
+    /// Bar count — fewer makes the wave shorter horizontally (the compact pill uses
+    /// fewer than the wide standard card).
+    var barCount = waveBarCount
+    private var count: Int { barCount }
+    private var barWidth: CGFloat { slim ? 2 : 4 }
+    private var barSpacing: CGFloat { slim ? 3 : 3 }
+    private var glowRadius: CGFloat { slim ? 1.5 : 5 }
+    /// Per-bar current height (0…1), eased toward a live target each tick — a
+    /// bounce-in-place equalizer: bars stay fixed and rise/fall with the voice.
+    @State private var heights: [Double]
+    /// Time phase so the bars shimmer with a little individual life even at a
+    /// steady level (each bar dances on a slightly different sine).
+    @State private var phase: Double = 0
 
-    /// Right→left scroll cadence for the bar history. Decoupled from the 30Hz
-    /// mic-level sampling so the wave glides calmly instead of racing across.
-    /// @State so the timer is created once and survives re-renders.
-    @State private var scroll = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    init(level: Double, slim: Bool = false, barCount: Int = waveBarCount) {
+        self.level = level
+        self.slim = slim
+        self.barCount = barCount
+        _heights = State(initialValue: Array(repeating: 0.05, count: barCount))
+    }
+    /// Freeze the meter for vestibular-sensitive users — the overlay is an
+    /// always-on floating HUD, so a permanently churning wave is exactly what
+    /// Reduce Motion exists to stop. Bars hold their calm resting height.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var tick = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geo in
-            HStack(alignment: .center, spacing: 3) {
+            HStack(alignment: .center, spacing: barSpacing) {
                 ForEach(0..<count, id: \.self) { i in
                     Capsule()
                         .fill(Brand.signal)
-                        .frame(width: 4, height: barHeight(i, maxHeight: geo.size.height))
+                        .frame(width: barWidth, height: barHeight(i, maxHeight: geo.size.height))
                         .opacity(edgeOpacity(i))
-                        .shadow(color: Brand.emerald.opacity(0.5), radius: 5)
+                        .shadow(color: Brand.emerald.opacity(0.5), radius: glowRadius)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .onReceive(scroll) { _ in
-            guard !reduceMotion else { return }
-            levels.removeFirst()
-            levels.append(max(level, 0.04))
+        .onReceive(tick) { _ in step() }
+    }
+
+    /// Advance the bounce: each bar eases toward `base + voice · perBar · react`,
+    /// with a fast rise and slower fall so it pops up and settles back down.
+    private func step() {
+        guard !reduceMotion else { return }
+        phase += 0.12
+        // Normalize the mic level to a 0…1 "voice energy": subtract the room-ambient
+        // floor and apply gain so silence reads ~0 and speech drives near-full.
+        let voice = min(1.0, max(0, level - 0.12) * 2.4)
+        var next = heights
+        for i in 0..<count {
+            let perBar = 0.5 + 0.5 * abs(sin(Double(i) * 0.8 + phase))
+            let target = 0.05 + voice * perBar * reactivity(i)
+            let rising = target > next[i]
+            next[i] += (target - next[i]) * (rising ? 0.18 : 0.09)
         }
+        heights = next
+    }
+
+    /// Center-weighted reactivity: the inner ~60% of bars react fully, then a fast
+    /// taper toward the ends (floored at 0.18 so the edges keep a little life).
+    private func reactivity(_ i: Int) -> Double {
+        let center = Double(count - 1) / 2
+        let d = abs(Double(i) - center) / center     // 0 center … 1 edge
+        if d <= 0.6 { return 1 }
+        let tp = (d - 0.6) / 0.4                      // 0…1 across the outer 40%
+        return max(0.18, 0.5 * (1 + cos(tp * .pi)))
     }
 
     private func barHeight(_ i: Int, maxHeight: CGFloat) -> CGFloat {
-        let v = levels[i]
-        return max(4, CGFloat(v) * (maxHeight - 8) + 6)
+        max(2, CGFloat(heights[i]) * (maxHeight - 2) + 2)
     }
 
     private func edgeOpacity(_ i: Int) -> Double {
@@ -559,13 +599,15 @@ struct WaveBars: View {
 }
 
 struct ProcessingDots: View {
+    var count = 5
+    var size: CGFloat = 9
     @State private var animate = false
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<5, id: \.self) { i in
+        HStack(spacing: size * 0.66) {
+            ForEach(0..<count, id: \.self) { i in
                 Circle()
                     .fill(Brand.signal)
-                    .frame(width: 9, height: 9)
+                    .frame(width: size, height: size)
                     .scaleEffect(animate ? 1.0 : 0.5)
                     .opacity(animate ? 1 : 0.4)
                     .animation(
