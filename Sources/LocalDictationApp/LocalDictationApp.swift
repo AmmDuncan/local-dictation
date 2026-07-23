@@ -53,6 +53,7 @@ struct LocalDictationApp: App {
 
     init() {
         OverlaySnapshot.runIfRequested()  // dev-only, flag-gated; exits before UI
+        RecordingsAB.runIfRequested()     // dev-only real-recordings before/after harness
         NSApplication.shared.setActivationPolicy(.accessory)
     }
 
