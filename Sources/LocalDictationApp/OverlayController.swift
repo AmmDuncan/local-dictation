@@ -272,10 +272,10 @@ final class OverlayController {
         // The compact pill's hover controls (✕ / ✓) need clicks while listening.
         let compactListening = style == .compact && phase == .listening
         panel.ignoresMouseEvents = phase != .error && phase != .reviewSubstitution && !compactListening
-        // Keep the compact pill draggable while listening — the ✕/✓ are controls
-        // that consume their own clicks, so dragging the pill body still works.
-        // Only the review card (chip toggles) opts out of drag-by-background.
-        panel.isMovableByWindowBackground = phase != .reviewSubstitution
+        // The compact HUD is fixed (not draggable). Its ✕/✓ still receive clicks
+        // (ignoresMouseEvents handled above). The standard card stays draggable;
+        // the review card (chip toggles) opts out of drag-by-background.
+        panel.isMovableByWindowBackground = phase != .reviewSubstitution && style != .compact
         positionIfNeeded(panel)
         panel.orderFrontRegardless()
     }
@@ -329,9 +329,12 @@ final class OverlayController {
 
         NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification, object: panel, queue: .main
-        ) { [weak panel] _ in
+        ) { [weak self, weak panel] _ in
             MainActor.assumeIsolated {
-                guard let panel else { return }
+                guard let self, let panel else { return }
+                // The compact HUD is fixed (not draggable) and always opens at its
+                // computed default, so it never persists a position.
+                guard self.style == .standard else { return }
                 let origin = panel.frame.origin
                 UserDefaults.standard.set([origin.x, origin.y], forKey: Self.originDefaultsKey)
             }
@@ -340,7 +343,10 @@ final class OverlayController {
     }
 
     private func positionIfNeeded(_ panel: NSPanel) {
-        if let stored = UserDefaults.standard.array(forKey: Self.originDefaultsKey) as? [Double],
+        // The compact HUD is fixed: always the computed default, never a saved
+        // origin. Only the standard card restores a dragged position.
+        if style == .standard,
+           let stored = UserDefaults.standard.array(forKey: Self.originDefaultsKey) as? [Double],
            stored.count == 2,
            NSScreen.screens.contains(where: { $0.frame.contains(NSPoint(x: stored[0], y: stored[1])) }) {
             panel.setFrameOrigin(NSPoint(x: stored[0], y: stored[1]))
@@ -353,7 +359,7 @@ final class OverlayController {
         // cursor/typing is, out of the way. The standard card keeps its near-top
         // placement. Either can be dragged anywhere (the move persists).
         let y = style == .compact
-            ? frame.minY + frame.height * 0.25
+            ? frame.minY + frame.height * 0.18
             : frame.maxY - panel.frame.height - 44
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
