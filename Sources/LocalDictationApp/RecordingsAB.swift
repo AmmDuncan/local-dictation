@@ -12,6 +12,12 @@ import LocalDictationCore
 ///
 /// No ground truth exists for these recordings, so this is a human-review diff, not
 /// a WER score: it surfaces every line the new pass would CHANGE so Ammiel can veto.
+///
+/// KNOWN LIMITATION: BEFORE covers only the DETERMINISTIC chain. It does NOT include
+/// the LLM polish (`polishWithAI`, needs a resident llama-server) or context
+/// substitution (`contextSubstitutionEnabled`, needs live on-screen context that
+/// archived clips can't replay). With those settings on, the live app corrects MORE
+/// than this harness shows — so treat BEFORE as a floor, not a faithful replay.
 enum RecordingsAB {
     static func runIfRequested() {
         guard CommandLine.arguments.contains("--recordings-ab") else { return }
